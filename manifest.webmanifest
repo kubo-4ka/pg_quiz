@@ -1,0 +1,16 @@
+{
+  "name": "pg_quiz - PostgreSQL 14 / OSS-DB クイズ",
+  "short_name": "pg_quiz",
+  "description": "PostgreSQL 14 文書に基づく OSS-DB Silver / Gold 対策の選択式クイズ（単一選択・複数選択）",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f5f8",
+  "theme_color": "#336791",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

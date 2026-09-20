@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>pg_quiz - PostgreSQL 14 / OSS-DB クイズ</title>
+  <meta name="description" content="PostgreSQL 14 文書に基づく OSS-DB Silver / Gold 対策の選択式クイズ（単一選択・複数選択）。模試・復習・学習分析つき。">
+  <meta name="theme-color" content="#336791">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐘</text></svg>">
+  <script>
+    // テーマのちらつき防止（本処理は app.js）
+    try {
+      var d = JSON.parse(localStorage.getItem('pg_quiz') || '{}');
+      if (d.settings && d.settings.theme) document.documentElement.setAttribute('data-theme', d.settings.theme);
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <a class="brand" href="#/home"><span class="brand-icon">🐘</span>pg_quiz</a>
+      <label class="theme-picker">
+        <span class="sr-only">テーマ</span>
+        <select id="themeSelect" aria-label="テーマ">
+          <option value="light">☀ ライト</option>
+          <option value="middle">◐ ミドル</option>
+          <option value="dark">☾ ダーク</option>
+        </select>
+      </label>
+    </header>
+
+    <main id="view" tabindex="-1"></main>
+
+    <nav class="tabbar" aria-label="メインメニュー">
+      <a href="#/home" data-tab="home"><span class="ti">🏠</span><span>ホーム</span></a>
+      <a href="#/analysis" data-tab="analysis"><span class="ti">📊</span><span>分析</span></a>
+      <a href="#/history" data-tab="history"><span class="ti">🕘</span><span>履歴</span></a>
+      <a href="#/list" data-tab="list"><span class="ti">📚</span><span>問題</span></a>
+      <a href="#/refs" data-tab="refs"><span class="ti">🔗</span><span>参考</span></a>
+    </nav>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+
+  <noscript>このアプリを利用するには JavaScript を有効にしてください。</noscript>
+
+  <script src="js/config.js"></script>
+  <script src="js/data/categories.js"></script>
+  <script src="js/data/references.js"></script>
+  <!-- questions:start -->
+  <script src="js/data/questions/S1.js"></script>
+  <script src="js/data/questions/S2.js"></script>
+  <script src="js/data/questions/S3.js"></script>
+  <script src="js/data/questions/G1.js"></script>
+  <script src="js/data/questions/G2.js"></script>
+  <script src="js/data/questions/G3.js"></script>
+  <script src="js/data/questions/G4.js"></script>
+  <script src="js/data/questions/V1.js"></script>
+  <!-- questions:end -->
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

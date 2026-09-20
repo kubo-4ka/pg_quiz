@@ -1,0 +1,13 @@
+{
+  "name": "pg_quiz",
+  "version": "1.0.0",
+  "license": "UNLICENSED",
+  "private": true,
+  "description": "PostgreSQL 14 / OSS-DB Silver・Gold 対策クイズ（静的サイト）",
+  "scripts": {
+    "serve": "node tools/serve.js",
+    "validate": "node tools/validate.js",
+    "check": "node tools/validate.js --links",
+    "format": "node tools/format.js"
+  }
+}
