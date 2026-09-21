@@ -30,7 +30,8 @@
         excludedCats: [],
         count: 10,
         shuffle: true,
-        sheetCollapsed: false
+        sheetCollapsed: false,
+        expWide: false        // 解説を広く見るために問題文をたたむ
       },
       log: [],      // 解答の記録 [時刻(ms), 問題ID, 正解なら1・不正解なら0]（古い順）
       qstats: {},   // log から集計 { [qid]: { a: 挑戦数, c: 正解数, w: 不正解数, s: 連続正解, r: 復習対象, last: 1|0, t: 最終日時 } }
@@ -161,7 +162,7 @@
     check(optional(st.qtype, (v) => oneOf(v, QTYPES)), '設定の出題タイプ');
     check(optional(st.excludedCats, (v) => Array.isArray(v) && v.every((c) => typeof c === 'string' && CAT_ID.test(c))), '設定のカテゴリ');
     check(optional(st.count, (v) => isInt(v, 0, 100000)), '設定の問題数');
-    check(optional(st.shuffle, (v) => typeof v === 'boolean') && optional(st.sheetCollapsed, (v) => typeof v === 'boolean'), '設定');
+    check(optional(st.shuffle, (v) => typeof v === 'boolean') && optional(st.sheetCollapsed, (v) => typeof v === 'boolean') && optional(st.expWide, (v) => typeof v === 'boolean'), '設定');
   }
 
   function checkGoal(g) {

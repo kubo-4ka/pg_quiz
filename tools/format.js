@@ -38,6 +38,14 @@ function serialize(q) {
   L.push(`  answer: ${Array.isArray(q.answer) ? '[' + q.answer.join(', ') + ']' : q.answer},`);
   if (q.shuffle === false) L.push('  shuffle: false,');
   L.push(`  exp: ${s(q.exp)},`);
+  if (q.evidence) {
+    L.push('  evidence: [');
+    q.evidence.forEach(([t, body], i) => {
+      L.push(`    [${s(t)},`);
+      L.push(`      ${s(body)}]${i < q.evidence.length - 1 ? ',' : ''}`);
+    });
+    L.push('  ],');
+  }
   L.push('  refs: [');
   q.refs.forEach(([t, u], i) => L.push(`    [${s(t)}, ${s(u)}]${i < q.refs.length - 1 ? ',' : ''}`));
   L.push('  ]');

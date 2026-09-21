@@ -430,6 +430,9 @@ select.input, input.input {
   overflow-y: auto;
   padding: 10px 14px 10px;
 }
+.row-inline { display: flex; align-items: center; gap: 8px; }
+.row-inline > .input { flex: 1; min-width: 0; }
+
 .qmeta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
 .qmeta .qid { font-size: 11.5px; color: var(--muted); margin-left: auto; }
 .qtext { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
@@ -503,24 +506,56 @@ select.input, input.input {
 .sheet-head {
   display: flex;
   align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 14px;
+  flex: none;
+}
+.sheet-toggle {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 8px 14px;
+  padding: 2px 0;
   border: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
-  width: 100%;
-  flex: none;
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
 }
-.sheet-head .verdict { font-weight: 800; font-size: 16px; }
+.qfold-btn { flex: none; font-size: 12px; min-width: 0; height: 30px; }
+/* 問題をたたんで解説を広く表示する */
+.quiz.exp-wide .qbody { display: none; }
+.quiz.exp-wide .sheet { max-height: 100%; flex: 1; }
+.sheet-toggle .verdict { font-weight: 800; font-size: 16px; }
 .sheet.ok .verdict { color: var(--good); }
 .sheet.ng .verdict { color: var(--bad); }
-.sheet-head .chev { margin-left: auto; color: var(--muted); font-size: 13px; }
+.sheet-toggle .chev { margin-left: auto; color: var(--muted); font-size: 13px; }
 .sheet-body { overflow-y: auto; padding: 0 14px 10px; font-size: 14px; min-height: 0; }
 .sheet.collapsed .sheet-body { display: none; }
 
 .exp { white-space: normal; }
 .refs { margin-top: 8px; font-size: 13px; }
+.ev-box { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.ev-box .ev-title { font-weight: 700; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+details.ev { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); margin-bottom: 6px; }
+details.ev > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+details.ev > summary::-webkit-details-marker { display: none; }
+details.ev > summary::before { content: "▸"; color: var(--muted); flex: none; }
+details.ev[open] > summary::before { content: "▾"; }
+details.ev .sum-note { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: auto; }
+details.ev > pre.code { margin: 0 8px 8px; max-height: 320px; overflow: auto; }
+
 .refs .refs-title { font-weight: 700; color: var(--muted); font-size: 12px; }
 .refs ul { margin: 2px 0 0; padding-left: 18px; }
 .refs li { margin: 2px 0; }

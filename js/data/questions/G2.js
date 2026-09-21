@@ -441,6 +441,12 @@
   ],
   answer: [0, 1],
   exp: 'wait_event_type が Lock、wait_event が transactionid の pid 9012 は、他のトランザクションが更新中の行を待っています。pg_blocking_pids() が {9004} を返しているので、待たせている相手は pid 9004 です。state は active でも、実際にはロック待ちで処理は進んでいません。\npid 9008 は state が idle in transaction で、Client / ClientRead（クライアントからの入力待ち）です。何も実行していなくても、トランザクション内で取得したロック（この例では SELECT ... FOR UPDATE の行ロック）は保持し続けます。\npid 9004 は Timeout / PgSleep で pg_sleep() の実行中です。9004 が 9012 を待たせているので、止めるなら 9004 の方です。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['3つのセッションの状態（app_batch が更新中、app_report が待ち、app_web はトランザクションを開いたまま）',
+      '=# SELECT pid, application_name, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by, left(query, 40) AS query FROM pg_stat_activity WHERE datname = \'evid3\' ORDER BY pid;\n  pid  | application_name | state  | wait_event_type |  wait_event   | blocked_by |                  query\n-------+------------------+--------+-----------------+---------------+------------+------------------------------------------\n 77131 | app_batch        | active | Timeout         | PgSleep       | {}         | BEGIN; UPDATE accounts SET balance = bal\n 77135 | app_web          | active | Timeout         | PgSleep       | {}         | BEGIN; SELECT * FROM accounts WHERE id =\n 77136 | app_report       | active | Lock            | transactionid | {77131}    | UPDATE accounts SET balance = balance +\n 77138 | psql             | active |                 |               | {}         | SELECT pid, application_name, state, wai\n(4 rows)'],
+    ['待たせている側と待っている側（pg_blocking_pids）とサーバログ',
+      '=# SELECT blocked.pid AS blocked_pid, blocking.pid AS blocking_pid, blocked.wait_event_type, blocked.wait_event FROM pg_stat_activity blocked JOIN LATERAL unnest(pg_blocking_pids(blocked.pid)) AS b(pid) ON true JOIN pg_stat_activity blocking ON blocking.pid = b.pid;\n blocked_pid | blocking_pid | wait_event_type |  wait_event\n-------------+--------------+-----------------+---------------\n       77136 |        77131 | Lock            | transactionid\n(1 row)\n\n pg_sleep\n----------\n\n(1 row)\n\n--- サーバログ（log_lock_waits = on、deadlock_timeout = 1s）\n2026-09-21 03:35:29.458 UTC [77136] postgres@evid3 LOG:  process 77136 still waiting for ShareLock on transaction 1100 after 1003.269 ms\n2026-09-21 03:35:51.442 UTC [77136] postgres@evid3 LOG:  process 77136 acquired ShareLock on transaction 1100 after 22988.009 ms']
+  ],
   refs: [
     ['pg_stat_activity', 'monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW'],
     ['待機イベント', 'monitoring-stats.html#WAIT-EVENT-TABLE'],
@@ -460,6 +466,12 @@
   ],
   answer: 0,
   exp: '待ちを探すには granted が f（false）の行を見ます。この結果では pid 9012 の「transactionid 758 / ShareLock」だけが f です。\n各トランザクションは自分のトランザクション ID に対する ExclusiveLock を保持しており、pid 9004 が 758 を持っています。行を更新しようとして、その行が別のトランザクションに更新されている場合、PostgreSQL は相手のトランザクション ID に対する ShareLock を要求し、相手の終了（コミットかロールバック）を待ちます。\npid 9012 の tuple ロックは granted = t で、これは「その行を次に更新する順番」を確保していることを表します。\nテーブルに対する RowExclusiveLock や RowShareLock は互いに競合しないため、すべて獲得できています。',
+  evidence: [
+    ['同じ状況での pg_locks（granted = f が待っているロック）',
+      '=# SELECT pid, locktype, relation::regclass AS relation, transactionid, mode, granted FROM pg_locks WHERE relation::regclass::text IN (\'accounts\',\'accounts_pkey\') OR locktype IN (\'transactionid\',\'tuple\') ORDER BY pid, locktype;\n  pid  |   locktype    |   relation    | transactionid |       mode       | granted\n-------+---------------+---------------+---------------+------------------+---------\n 77131 | relation      | accounts      |               | RowExclusiveLock | t\n 77131 | relation      | accounts_pkey |               | RowExclusiveLock | t\n 77131 | transactionid |               |          1100 | ExclusiveLock    | t\n 77135 | relation      | accounts_pkey |               | AccessShareLock  | t\n 77135 | relation      | accounts      |               | AccessShareLock  | t\n 77136 | relation      | accounts      |               | RowExclusiveLock | t\n 77136 | relation      | accounts_pkey |               | RowExclusiveLock | t\n 77136 | transactionid |               |          1100 | ShareLock        | f\n 77136 | transactionid |               |          1102 | ExclusiveLock    | t\n 77136 | tuple         | accounts      |               | ExclusiveLock    | t\n(10 rows)'],
+    ['どのセッションが誰を待っているか（pg_blocking_pids）とサーバログ',
+      '=# SELECT blocked.pid AS blocked_pid, blocking.pid AS blocking_pid, blocked.wait_event_type, blocked.wait_event FROM pg_stat_activity blocked JOIN LATERAL unnest(pg_blocking_pids(blocked.pid)) AS b(pid) ON true JOIN pg_stat_activity blocking ON blocking.pid = b.pid;\n blocked_pid | blocking_pid | wait_event_type |  wait_event\n-------------+--------------+-----------------+---------------\n       77136 |        77131 | Lock            | transactionid\n(1 row)\n\n pg_sleep\n----------\n\n(1 row)\n\n--- サーバログ（log_lock_waits = on、deadlock_timeout = 1s）\n2026-09-21 03:35:29.458 UTC [77136] postgres@evid3 LOG:  process 77136 still waiting for ShareLock on transaction 1100 after 1003.269 ms\n2026-09-21 03:35:51.442 UTC [77136] postgres@evid3 LOG:  process 77136 acquired ShareLock on transaction 1100 after 22988.009 ms']
+  ],
   refs: [
     ['pg_locks', 'view-pg-locks.html'],
     ['明示的ロック', 'explicit-locking.html']
@@ -478,6 +490,12 @@
   ],
   answer: 0,
   exp: 'log_lock_waits = on のとき、deadlock_timeout（この環境では 1s）を超えてロックを待ったプロセスが「still waiting for ...」として記録されます。デッドロック検査のタイミングで記録されるため、1秒を少し過ぎた時点になっています。DETAIL で、ロックを保持しているのがプロセス 9004 であること、待ち行列が 9012 であることが分かります。\nその後「acquired ... after 17997.652 ms」で、約18秒待ってロックを獲得したことが記録されています。エラーにはなっていません。\n待っている対象は「トランザクション 758 の終了」で、CONTEXT から accounts テーブルの行 (0,1) を更新しようとしていたことが分かります。テーブル全体のロックではありません。\nこのログは PostgreSQL 14 で実際に出力されたものです。',
+  evidence: [
+    ['ログが出たときのセッションの状態とロック',
+      '=# SELECT pid, application_name, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by, left(query, 40) AS query FROM pg_stat_activity WHERE datname = \'evid3\' ORDER BY pid;\n  pid  | application_name | state  | wait_event_type |  wait_event   | blocked_by |                  query\n-------+------------------+--------+-----------------+---------------+------------+------------------------------------------\n 77131 | app_batch        | active | Timeout         | PgSleep       | {}         | BEGIN; UPDATE accounts SET balance = bal\n 77135 | app_web          | active | Timeout         | PgSleep       | {}         | BEGIN; SELECT * FROM accounts WHERE id =\n 77136 | app_report       | active | Lock            | transactionid | {77131}    | UPDATE accounts SET balance = balance +\n 77138 | psql             | active |                 |               | {}         | SELECT pid, application_name, state, wai\n(4 rows)\n\n=# SELECT pid, locktype, relation::regclass AS relation, transactionid, mode, granted FROM pg_locks WHERE relation::regclass::text IN (\'accounts\',\'accounts_pkey\') OR locktype IN (\'transactionid\',\'tuple\') ORDER BY pid, locktype;\n  pid  |   locktype    |   relation    | transactionid |       mode       | granted\n-------+---------------+---------------+---------------+------------------+---------\n 77131 | relation      | accounts      |               | RowExclusiveLock | t\n 77131 | relation      | accounts_pkey |               | RowExclusiveLock | t\n 77131 | transactionid |               |          1100 | ExclusiveLock    | t\n 77135 | relation      | accounts_pkey |               | AccessShareLock  | t\n 77135 | relation      | accounts      |               | AccessShareLock  | t\n 77136 | relation      | accounts      |               | RowExclusiveLock | t\n 77136 | relation      | accounts_pkey |               | RowExclusiveLock | t\n 77136 | transactionid |               |          1100 | ShareLock        | f\n 77136 | transactionid |               |          1102 | ExclusiveLock    | t\n 77136 | tuple         | accounts      |               | ExclusiveLock    | t\n(10 rows)'],
+    ['サーバログ（log_lock_waits = on、deadlock_timeout = 1s）',
+      '--- サーバログ（log_lock_waits = on、deadlock_timeout = 1s）\n2026-09-21 03:35:29.458 UTC [77136] postgres@evid3 LOG:  process 77136 still waiting for ShareLock on transaction 1100 after 1003.269 ms\n2026-09-21 03:35:51.442 UTC [77136] postgres@evid3 LOG:  process 77136 acquired ShareLock on transaction 1100 after 22988.009 ms']
+  ],
   refs: [
     ['log_lock_waits', 'runtime-config-logging.html#GUC-LOG-LOCK-WAITS'],
     ['deadlock_timeout', 'runtime-config-locks.html#GUC-DEADLOCK-TIMEOUT']
@@ -496,6 +514,10 @@
   ],
   answer: 0,
   exp: 'pg_stat_database の deadlocks、temp_files、temp_bytes は累積値で、統計がリセットされてからの合計です。一時ファイルは処理が終われば削除されるので、今ディスクに残っている量ではありません。\ntemp_files / temp_bytes は、ソートやハッシュが work_mem に収まらずに作られた一時ファイルの数と量です。値が大きい場合は、log_temp_files で原因の問い合わせを特定し、work_mem の調整を検討します。\nconflicts はスタンバイでリカバリ競合によって取り消された問い合わせの数で、デッドロックとは関係ありません（プライマリでは常に 0 です）。\n累積統計は、正常に停止・起動した場合は保持されます（クラッシュ時や pg_stat_reset() でリセットされます）。',
+  evidence: [
+    ['デッドロックを1件起こし、work_mem を小さくしてソートしたあとの pg_stat_database',
+      'ERROR:  deadlock detected\nDETAIL:  Process 77158 waits for ShareLock on transaction 1103; blocked by process 77155.\nHINT:  See server log for query details.\n=# SELECT datname, deadlocks, temp_files, pg_size_pretty(temp_bytes) AS temp_bytes, conflicts FROM pg_stat_database WHERE datname = \'evid3\';\n datname | deadlocks | temp_files | temp_bytes | conflicts\n---------+-----------+------------+------------+-----------\n evid3   |         1 |          3 | 7704 kB    |         0\n(1 row)\n\n--- サーバログ（log_temp_files = 0 相当）\n2026-09-21 03:35:56.796 UTC [77169] postgres@evid3 LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp77169.0", size 2629632\n2026-09-21 03:35:56.918 UTC [77175] postgres@evid3 LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp77175.0", size 2629632']
+  ],
   refs: [
     ['pg_stat_database', 'monitoring-stats.html#MONITORING-PG-STAT-DATABASE-VIEW'],
     ['log_temp_files', 'runtime-config-logging.html#GUC-LOG-TEMP-FILES']
@@ -514,6 +536,10 @@
   ],
   answer: 0,
   exp: 'pg_stat_activity にはクライアント接続（backend_type = client backend）だけでなく、checkpointer、background writer、walwriter、autovacuum launcher などの補助プロセスも表示されます。この結果のクライアント接続は、問い合わせを実行している自分自身だけです。\nwait_event_type の Activity は、補助プロセスが仕事を待ってメインループで待機していることを表し、ロック待ち（Lock）ではありません。\nwalwriter はプライマリで WAL を書き出すプロセスです（スタンバイでは startup や walreceiver が現れます）。\narchiver は archive_mode = on のときだけ起動するため、アーカイブを使っていなければ表示されないのが正常です。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['pg_stat_activity に見えるプロセス',
+      '=# SELECT pid, backend_type, state, wait_event_type, wait_event FROM pg_stat_activity ORDER BY backend_type;\n  pid  |         backend_type         | state  | wait_event_type |     wait_event\n-------+------------------------------+--------+-----------------+---------------------\n 43599 | autovacuum launcher          |        | Activity        | AutoVacuumMain\n 43597 | background writer            |        | Activity        | BgWriterHibernate\n 43596 | checkpointer                 |        | Activity        | CheckpointerMain\n 77183 | client backend               | active |                 |\n 43601 | logical replication launcher |        | Activity        | LogicalLauncherMain\n 43598 | walwriter                    |        | Activity        | WalWriterMain\n(6 rows)']
+  ],
   refs: [
     ['pg_stat_activity', 'monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW'],
     ['待機イベント', 'monitoring-stats.html#WAIT-EVENT-TABLE']
@@ -637,6 +663,10 @@
   ],
   answer: 2,
   exp: 'プランナは既定では各列の条件を独立とみなし、それぞれの選択率を掛け合わせて行数を推定します。city が決まれば zip もほぼ決まるような関数従属がある場合、この仮定により推定行数が過小になり、不適切な実行計画（Nested Loop の多用など）の原因になります。\nCREATE STATISTICS s1 (dependencies) ON city, zip FROM addr; で列間の関数従属性の拡張統計を作成し、ANALYZE を実行すると、推定に反映されます。\nコスト定数の変更やインデックスの作成、VACUUM FULL は、推定行数の誤りそのものは解消しません。',
+  evidence: [
+    ['拡張統計を作る前後の見積もり（pref と city は1対1に対応する）',
+      '=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM customers WHERE pref = \'P10\' AND city = \'C10-1\';\n                                       QUERY PLAN\n----------------------------------------------------------------------------------------\n Seq Scan on customers  (cost=0.00..2041.00 rows=14 width=12) (actual rows=710 loops=1)\n   Filter: ((pref = \'P10\'::text) AND (city = \'C10-1\'::text))\n   Rows Removed by Filter: 99290\n(3 rows)\n\n=# CREATE STATISTICS customers_pref_city (dependencies) ON pref, city FROM customers;\nCREATE STATISTICS\n=# SELECT statistics_name, attnames, kinds, dependencies FROM pg_stats_ext WHERE statistics_name = \'customers_pref_city\';\n   statistics_name   |  attnames   | kinds |     dependencies\n---------------------+-------------+-------+----------------------\n customers_pref_city | {pref,city} | {f}   | {"3 => 2": 1.000000}\n(1 row)\n\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM customers WHERE pref = \'P10\' AND city = \'C10-1\';\n                                       QUERY PLAN\n-----------------------------------------------------------------------------------------\n Seq Scan on customers  (cost=0.00..2041.00 rows=705 width=12) (actual rows=710 loops=1)\n   Filter: ((pref = \'P10\'::text) AND (city = \'C10-1\'::text))\n   Rows Removed by Filter: 99290\n(3 rows)']
+  ],
   refs: [
     ['拡張統計', 'planner-stats.html#PLANNER-STATS-EXTENDED'],
     ['CREATE STATISTICS', 'sql-createstatistics.html']
@@ -688,6 +718,10 @@
   ],
   answer: 0,
   exp: 'pg_stats.n_distinct は、正の値ならその列の個別値の数そのものを、負の値なら行数に対する比率（の符号を反転したもの）を表します。-0.5 は「個別値の数が行数の 0.5 倍」、-1 は「すべての行が異なる値（一意）」という意味です。テーブルが大きくなるにつれて個別値も増える列では、負の形式が適しています。\nn_distinct は ALTER TABLE ... ALTER COLUMN ... SET (n_distinct = ...) で手動指定することもできます。\nNULL の割合は null_frac 列で表されます。',
+  evidence: [
+    ['行数の半分の種類の値を入れた列の n_distinct',
+      '=# SELECT attname, n_distinct FROM pg_stats WHERE tablename = \'half\';\n attname | n_distinct\n---------+------------\n id      |   -0.49883\n(1 row)\n\n=# SELECT count(*) AS rows, count(DISTINCT id) AS distinct_values FROM half;\n  rows  | distinct_values\n--------+-----------------\n 100000 |           50001\n(1 row)']
+  ],
   refs: [
     ['pg_stats', 'view-pg-stats.html'],
     ['プランナで使用される統計情報', 'planner-stats.html']
@@ -774,6 +808,10 @@
   ],
   answer: [0, 1],
   exp: 'n_distinct が -1 は「すべての行で値が異なる（行数と同じだけ個別値がある）」、負の値は行数に対する割合を表します。customer_id の -0.25865 は、個別値が行数の約 26% と推定されていることを意味します。\ncorrelation は、物理的な格納順と列の値の順序の相関で、1 に近いほど揃っています。連番で挿入した id と created_at は 1 です。status も 0.98 と高い値です。correlation が 1 に近い列は、範囲検索でインデックススキャンのランダムアクセスが少なくて済むため、プランナがインデックスを選びやすくなります。0 に近くても、選択率が低ければインデックスは使われます。\nnull_frac の 1 は、すべての行が NULL であることを表します。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['pg_stats と、実際のテーブルの内容',
+      '=# SELECT attname, null_frac, n_distinct, correlation FROM pg_stats WHERE tablename = \'orders\' ORDER BY attname;\n   attname   | null_frac | n_distinct | correlation\n-------------+-----------+------------+--------------\n amount      |         0 |        500 | 0.0069992375\n created_at  |         0 |         -1 |            1\n customer_id |         0 |       1000 |  0.013974413\n id          |         0 |         -1 |            1\n note        |         1 |          0 |\n status      |         0 |          2 |    0.9820641\n(6 rows)\n\n=# SELECT count(*) AS rows, count(DISTINCT customer_id) AS distinct_customer, count(DISTINCT status) AS distinct_status, count(note) AS note_not_null FROM orders;\n  rows  | distinct_customer | distinct_status | note_not_null\n--------+-------------------+-----------------+---------------\n 100000 |              1000 |               2 |             0\n(1 row)']
+  ],
   refs: [
     ['pg_stats', 'view-pg-stats.html'],
     ['プランナで使用される統計情報', 'planner-stats.html']
@@ -793,6 +831,10 @@
   answer: 4,
   shuffle: false,
   exp: 'most_common_vals（最頻値）と most_common_freqs（その出現頻度）は、pg_stats の同じ位置どうしが対応しています。status = \'hold\' の見積もりは、hold の頻度 0.0801 × 行数 100000 ≒ 8010 行で、表示された rows=8010 と一致します。\nIN (\'open\', \'spam\') は、どちらかに一致する行なので、頻度を足して (0.19636667 + 0.019966668) × 100000 ≒ 21633 行と見積もられます。実機でも rows=21633 でした。\n19637 は open だけ、1997 は spam だけの見積もりです。最頻値のリストにない値（例: \'unknown\'）は、残りの頻度と個数から推定され、この例ではほぼ 0 のため rows=1 と表示されました。\n統計は ANALYZE のサンプリング（既定では 30000 行）に基づくため、頻度は実際の割合（open 20%、spam 2% など）と少しずれます。',
+  evidence: [
+    ['tickets の統計情報と実行計画（10万行）',
+      'terms=# SELECT attname, null_frac, n_distinct, most_common_vals, most_common_freqs FROM pg_stats WHERE tablename = \'tickets\' AND attname IN (\'status\', \'pri\') ORDER BY attname;\n attname | null_frac | n_distinct |    most_common_vals     |                  most_common_freqs\n---------+-----------+------------+-------------------------+------------------------------------------------------\n pri     |         0 |          5 | {0,4,3,2,1}             | {0.20233333,0.20196667,0.19963333,0.19836667,0.1977}\n status  |         0 |          4 | {closed,open,hold,spam} | {0.7035667,0.19636667,0.0801,0.019966668}\n(2 rows)\n\nterms=# SELECT reltuples FROM pg_class WHERE relname = \'tickets\';\n reltuples\n-----------\n    100000\n(1 row)\n\nterms=# EXPLAIN SELECT * FROM tickets WHERE status = \'hold\';\n                          QUERY PLAN\n--------------------------------------------------------------\n Seq Scan on tickets  (cost=0.00..1791.00 rows=8010 width=14)\n   Filter: (status = \'hold\'::text)\n(2 rows)\n\nterms=# EXPLAIN SELECT * FROM tickets WHERE status = \'unknown\';\n                        QUERY PLAN\n-----------------------------------------------------------\n Seq Scan on tickets  (cost=0.00..1791.00 rows=1 width=14)\n   Filter: (status = \'unknown\'::text)\n(2 rows)\n\nterms=# EXPLAIN SELECT * FROM tickets WHERE status IN (\'open\', \'spam\');\n                          QUERY PLAN\n---------------------------------------------------------------\n Seq Scan on tickets  (cost=0.00..1791.00 rows=21633 width=14)\n   Filter: (status = ANY (\'{open,spam}\'::text[]))\n(2 rows)']
+  ],
   refs: [
     ['pg_stats', 'view-pg-stats.html'],
     ['行数推定の例', 'row-estimation-examples.html'],
@@ -812,6 +854,10 @@
   ],
   answer: 0,
   exp: 'プランナは通常、条件どうしを独立とみなし、選択率を掛け合わせて見積もります。city = \'c1\'（約1%）と zip = \'z1\'（約1%）で 50000 × 0.01 × 0.01 ≒ 5 となり、実際の 500 行を大きく下回る rows=6 になりました。\nCREATE STATISTICS は、複数の列にまたがる拡張統計の定義を作成するコマンドで、定義は pg_statistic_ext に登録されます（stxkind の f は関数従属性 dependencies）。統計値そのものは次の ANALYZE で集められ、pg_statistic_ext_data に格納されます。作成直後の stxddependencies が空で、ANALYZE 後に値が入っていることからも分かります。\n関数従属性の値 1.000000 は、一方の列の値でもう一方が完全に決まることを表し、これにより見積もりは rows=512 と実際に近い値に補正されました。拡張統計の内容は pg_stats_ext ビューでも確認できます。',
+  evidence: [
+    ['拡張統計の作成から ANALYZE までの全体',
+      'terms=# CREATE TABLE addr (city text, zip text); INSERT INTO addr SELECT \'c\' || (g % 100), \'z\' || (g % 100) FROM generate_series(1, 50000) g; ANALYZE addr;\nANALYZE\nterms=# EXPLAIN SELECT * FROM addr WHERE city = \'c1\' AND zip = \'z1\';\n                       QUERY PLAN\n--------------------------------------------------------\n Seq Scan on addr  (cost=0.00..972.00 rows=6 width=6)\n   Filter: ((city = \'c1\'::text) AND (zip = \'z1\'::text))\n(2 rows)\n\nterms=# CREATE STATISTICS addr_dep (dependencies) ON city, zip FROM addr;\nCREATE STATISTICS\nterms=# SELECT stxname, stxkeys, stxkind FROM pg_statistic_ext WHERE stxname = \'addr_dep\';\n stxname  | stxkeys | stxkind\n----------+---------+---------\n addr_dep | 1 2     | {f}\n(1 row)\n\nterms=# SELECT d.stxddependencies FROM pg_statistic_ext s JOIN pg_statistic_ext_data d ON d.stxoid = s.oid WHERE s.stxname = \'addr_dep\';\n stxddependencies\n------------------\n\n(1 row)\n\nterms=# ANALYZE addr;\nANALYZE\nterms=# SELECT d.stxddependencies FROM pg_statistic_ext s JOIN pg_statistic_ext_data d ON d.stxoid = s.oid WHERE s.stxname = \'addr_dep\';\n             stxddependencies\n------------------------------------------\n {"1 => 2": 1.000000, "2 => 1": 1.000000}\n(1 row)\n\nterms=# EXPLAIN SELECT * FROM addr WHERE city = \'c1\' AND zip = \'z1\';\n                       QUERY PLAN\n--------------------------------------------------------\n Seq Scan on addr  (cost=0.00..972.00 rows=512 width=6)\n   Filter: ((city = \'c1\'::text) AND (zip = \'z1\'::text))\n(2 rows)\n\nterms=# SELECT statistics_name, attnames, kinds, dependencies FROM pg_stats_ext WHERE statistics_name = \'addr_dep\';\n statistics_name |  attnames  | kinds |               dependencies\n-----------------+------------+-------+------------------------------------------\n addr_dep        | {city,zip} | {f}   | {"1 => 2": 1.000000, "2 => 1": 1.000000}\n(1 row)']
+  ],
   refs: [
     ['拡張統計', 'planner-stats.html#PLANNER-STATS-EXTENDED'],
     ['CREATE STATISTICS', 'sql-createstatistics.html'],
@@ -852,6 +898,12 @@
   ],
   answer: 1,
   exp: 'Hash Join では、Hash ノードの下にある子（内側、この例では customers の Seq Scan）の行からメモリ上にハッシュテーブルを作成し、もう一方の子（外側、orders の Seq Scan）の各行について Hash Cond の結合キーでハッシュテーブルを探索します。\n結合前に両方の入力をソートするのは Merge Join です。この計画ではどちらのテーブルも Seq Scan で、インデックスは使われていません。\nHash Cond はハッシュ結合の結合条件そのものです（結合後のフィルタは Join Filter や Filter と表示されます）。',
+  evidence: [
+    ['同じ問い合わせをハッシュ結合で実行させた場合の実行計画',
+      '=# SET enable_memoize = off; SET enable_nestloop = off; EXPLAIN SELECT o.id, c.pref FROM orders o JOIN customers c ON o.customer_id = c.id;\n                                  QUERY PLAN\n-------------------------------------------------------------------------------\n Hash Join  (cost=3182.00..9278.51 rows=100000 width=7)\n   Hash Cond: (o.customer_id = c.id)\n   ->  Seq Scan on orders o  (cost=0.00..4661.00 rows=100000 width=8)\n   ->  Hash  (cost=1541.00..1541.00 rows=100000 width=7)\n         ->  Seq Scan on customers c  (cost=0.00..1541.00 rows=100000 width=7)\n(5 rows)'],
+    ['（既定ではこの条件では Nested Loop + Memoize が選ばれた）',
+      '=# EXPLAIN SELECT o.id, c.pref FROM orders o JOIN customers c ON o.customer_id = c.id;\n                                          QUERY PLAN\n----------------------------------------------------------------------------------------------\n Nested Loop  (cost=0.30..4579.00 rows=100000 width=7)\n   ->  Seq Scan on orders o  (cost=0.00..1736.00 rows=100000 width=8)\n   ->  Memoize  (cost=0.30..0.35 rows=1 width=7)\n         Cache Key: o.customer_id\n         Cache Mode: logical\n         ->  Index Scan using customers_pkey on customers c  (cost=0.29..0.34 rows=1 width=7)\n               Index Cond: (id = o.customer_id)\n(7 rows)']
+  ],
   refs: [
     ['EXPLAINの基本', 'using-explain.html#USING-EXPLAIN-BASICS'],
     ['プランナ/オプティマイザ（結合方式）', 'planner-optimizer.html']
@@ -939,6 +991,10 @@
   ],
   answer: 4,
   exp: 'rows=5 はプランナの推定行数、actual の rows=48210 は実際に返された行数です。推定が大きくずれていると、結合方式やスキャン方式の選択を誤る原因になります。統計情報が古い、統計目標が小さい、列間の相関がある、などが考えられるため、まず ANALYZE の実行や統計情報の見直しを検討します。\nSeq Scan の Filter は各行を読みながら条件を評価したことを表し、Rows Removed by Filter は条件を満たさずに除外された行数です（データは削除されません）。\nactual time は「最初の行を返すまで..すべての行を返すまで」の時間（ミリ秒、1ループあたり）で、cost は時間ではない任意の単位の見積もりです。',
+  evidence: [
+    ['統計が最新の場合と、更新後に ANALYZE していない場合の見積もり',
+      '=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM orders WHERE status = \'shipped\';\n                                        QUERY PLAN\n------------------------------------------------------------------------------------------\n Seq Scan on orders  (cost=0.00..1986.00 rows=98973 width=60) (actual rows=99000 loops=1)\n   Filter: (status = \'shipped\'::text)\n   Rows Removed by Filter: 1000\n(3 rows)\n\n(ANALYZE せずに検索した場合: 統計は更新前のまま)\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM orders WHERE status = \'pending\';\n                                     QUERY PLAN\n-------------------------------------------------------------------------------------\n Seq Scan on orders  (cost=0.00..2004.89 rows=1036 width=60) (actual rows=0 loops=1)\n   Filter: (status = \'pending\'::text)\n   Rows Removed by Filter: 100000\n(3 rows)']
+  ],
   refs: [
     ['EXPLAIN ANALYZE', 'using-explain.html#USING-EXPLAIN-ANALYZE'],
     ['プランナで使用される統計情報', 'planner-stats.html']
@@ -974,6 +1030,10 @@
   ],
   answer: 2,
   exp: 'Sort Method: external merge  Disk: 25640kB は、ソートするデータが work_mem に収まらず、一時ファイル（約 25MB）を使った外部マージソートが行われたことを表します。メモリ内で完了した場合は quicksort  Memory: …kB、LIMIT と組み合わせて上位だけを保持した場合は top-N heapsort と表示されます。\nディスクを使うソートは遅くなるため、セッション単位で work_mem を増やす、ORDER BY の列にインデックスを作成してソート済みの順序で読み出す、取得する行数や列を減らす、などを検討します。\nソートのメモリは各バックエンドのプライベートメモリで、共有バッファではありません。一時ファイルは WAL ではありません。',
+  evidence: [
+    ['work_mem を変えて同じソートを実行した結果',
+      '=# SET work_mem = \'64kB\'; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM orders ORDER BY created_at;\n                                            QUERY PLAN\n--------------------------------------------------------------------------------------------------\n Sort  (cost=21335.32..21585.32 rows=100000 width=60) (actual rows=100000 loops=1)\n   Sort Key: created_at\n   Sort Method: external merge  Disk: 4136kB\n   ->  Seq Scan on orders  (cost=0.00..1743.00 rows=100000 width=60) (actual rows=100000 loops=1)\n(4 rows)\n\n=# SET work_mem = \'32MB\'; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM orders ORDER BY created_at;\n                                            QUERY PLAN\n--------------------------------------------------------------------------------------------------\n Sort  (cost=10047.82..10297.82 rows=100000 width=60) (actual rows=100000 loops=1)\n   Sort Key: created_at\n   Sort Method: quicksort  Memory: 10885kB\n   ->  Seq Scan on orders  (cost=0.00..1743.00 rows=100000 width=60) (actual rows=100000 loops=1)\n(4 rows)']
+  ],
   refs: [
     ['EXPLAIN ANALYZE', 'using-explain.html#USING-EXPLAIN-ANALYZE'],
     ['work_mem', 'runtime-config-resource.html#GUC-WORK-MEM']
@@ -991,6 +1051,10 @@
   ],
   answer: 2,
   exp: 'BUFFERS オプションは、各ノードのバッファの使用状況を表示します。\n・shared hit: 共有バッファ上に既に存在していたブロック数\n・shared read: 共有バッファになく、ファイルから読み込んだブロック数（OS のページキャッシュから読まれた場合も含む）\n・shared dirtied / written: 変更したブロック数 / 書き出したブロック数\n・local: 一時テーブルのバッファ、temp: 一時ファイルのブロック\nread が多いノードは I/O の影響を受けやすく、同じ問い合わせを繰り返すと hit の割合が増えることが多いため、性能測定の際はキャッシュの状態も考慮します。',
+  evidence: [
+    ['共有バッファが空の状態（サーバ再起動直後）と、2回目の実行',
+      '=# EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) SELECT count(*) FROM orders WHERE amount > 4000;\n                                          QUERY PLAN\n-----------------------------------------------------------------------------------------------\n Aggregate  (cost=4961.47..4961.48 rows=1 width=8) (actual rows=1 loops=1)\n   Buffers: shared read=3661\n   ->  Seq Scan on orders  (cost=0.00..4911.00 rows=20188 width=0) (actual rows=20000 loops=1)\n         Filter: (amount > 4000)\n         Rows Removed by Filter: 80000\n         Buffers: shared read=3661\n Planning:\n   Buffers: shared hit=84 read=24\n(8 rows)\n\n（同じ問い合わせをもう一度: 共有バッファに載っているので read が減る）\n=# EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF) SELECT count(*) FROM orders WHERE amount > 4000;\n                                          QUERY PLAN\n-----------------------------------------------------------------------------------------------\n Aggregate  (cost=4961.47..4961.48 rows=1 width=8) (actual rows=1 loops=1)\n   Buffers: shared hit=3661\n   ->  Seq Scan on orders  (cost=0.00..4911.00 rows=20188 width=0) (actual rows=20000 loops=1)\n         Filter: (amount > 4000)\n         Rows Removed by Filter: 80000\n         Buffers: shared hit=3661\n Planning:\n   Buffers: shared hit=113\n(8 rows)']
+  ],
   refs: [
     ['EXPLAIN', 'sql-explain.html'],
     ['EXPLAIN ANALYZE', 'using-explain.html#USING-EXPLAIN-ANALYZE']
@@ -1059,6 +1123,10 @@
   ],
   answer: 0,
   exp: 'EXPLAIN ANALYZE の actual の rows と time は、loops 回の実行の「平均値」です。合計を知りたい場合は rows × loops、time × loops を計算します。この例では合計およそ 4080 行、0.850 × 340 ≒ 289 ミリ秒です。\nloops が大きくなるのは、Nested Loop の内側のように外側の行ごとに繰り返し実行されるノードです。\nactual time の2つの数値は、最初の行が返るまでの時間（起動時間）と、すべての行が返るまでの時間です。\n推定側は cost=... rows=... として別に表示され、推定と実測の乖離が大きいノードがチューニングの手がかりになります。',
+  evidence: [
+    ['内側が 50回繰り返される Nested Loop の実行計画',
+      '=# SET enable_hashjoin = off; SET enable_mergejoin = off; SET enable_memoize = off; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT c.id, o.id FROM customers c JOIN orders o ON o.customer_id = c.id WHERE c.id BETWEEN 1 AND 50;\n                                                       QUERY PLAN\n------------------------------------------------------------------------------------------------------------------------\n Nested Loop  (cost=4.86..11960.32 rows=56 width=8) (actual rows=5000 loops=1)\n   ->  Index Only Scan using customers_pkey on customers c  (cost=0.29..5.41 rows=56 width=4) (actual rows=50 loops=1)\n         Index Cond: ((id >= 1) AND (id <= 50))\n         Heap Fetches: 0\n   ->  Bitmap Heap Scan on orders o  (cost=4.57..212.48 rows=100 width=8) (actual rows=100 loops=50)\n         Recheck Cond: (customer_id = c.id)\n         Heap Blocks: exact=5000\n         ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..4.54 rows=100 width=0) (actual rows=100 loops=50)\n               Index Cond: (customer_id = c.id)\n(9 rows)']
+  ],
   refs: [
     ['EXPLAIN ANALYZE', 'using-explain.html#USING-EXPLAIN-ANALYZE'],
     ['EXPLAIN', 'sql-explain.html']
@@ -1299,6 +1367,10 @@
   ],
   answer: 0,
   exp: 'プランナは既定では列どうしを独立とみなし、pref = \'P10\' の選択率と city = \'C10-1\' の選択率を掛け合わせて行数を推定します。実際には city が決まれば pref も決まる（関数従属がある）ため、掛け合わせると大幅な過小評価になります。(1) の推定 15 行に対して実際は 710 行でした。\nCREATE STATISTICS ... (dependencies) で列間の関数従属の統計を作り、ANALYZE で収集すると、推定が 707 行とほぼ正確になりました。推定が正しくなると、結合方式や集約方式の選択が適切になります。\n拡張統計はインデックスを作るものではなく、この例でも Seq Scan のままです。\ncost=... rows= が推定、actual rows= が実測です。Rows Removed by Filter は (1) (2) とも同じです。\nこの計画は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['同じ操作を実機で行った結果（拡張統計の作成と ANALYZE の前後）',
+      '=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM customers WHERE pref = \'P10\' AND city = \'C10-1\';\n                                       QUERY PLAN\n----------------------------------------------------------------------------------------\n Seq Scan on customers  (cost=0.00..2041.00 rows=14 width=12) (actual rows=710 loops=1)\n   Filter: ((pref = \'P10\'::text) AND (city = \'C10-1\'::text))\n   Rows Removed by Filter: 99290\n(3 rows)\n\n=# CREATE STATISTICS customers_pref_city (dependencies) ON pref, city FROM customers;\nCREATE STATISTICS\n=# SELECT statistics_name, attnames, kinds, dependencies FROM pg_stats_ext WHERE statistics_name = \'customers_pref_city\';\n   statistics_name   |  attnames   | kinds |     dependencies\n---------------------+-------------+-------+----------------------\n customers_pref_city | {pref,city} | {f}   | {"3 => 2": 1.000000}\n(1 row)\n\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM customers WHERE pref = \'P10\' AND city = \'C10-1\';\n                                       QUERY PLAN\n-----------------------------------------------------------------------------------------\n Seq Scan on customers  (cost=0.00..2041.00 rows=705 width=12) (actual rows=710 loops=1)\n   Filter: ((pref = \'P10\'::text) AND (city = \'C10-1\'::text))\n   Rows Removed by Filter: 99290\n(3 rows)']
+  ],
   refs: [
     ['拡張統計情報', 'planner-stats.html#PLANNER-STATS-EXTENDED'],
     ['CREATE STATISTICS', 'sql-createstatistics.html'],
@@ -1318,6 +1390,10 @@
   ],
   answer: [0, 1],
   exp: 'Sort Method が external merge で Disk: ... と表示されていれば、ソートが work_mem に収まらず一時ファイルを使ったことを示します。quicksort で Memory: ... ならメモリ内で完結しています。パラレルクエリでは、リーダーと各ワーカーがそれぞれ work_mem まで使えるため、ワーカーの分も「Worker 0: Sort Method ...」として表示されます。\nWorkers Launched: 1 なので、ワーカーは実際に起動しています（リーダーと合わせて2プロセスで処理、loops=2）。\nこの例では、work_mem を増やしたことでプランナが並列でない計画を選び、メモリ内でソートしたにもかかわらず実行時間はむしろ長くなりました。work_mem を増やせば必ず速くなるわけではなく、計画の変化も含めて確認する必要があります。\nこの計画は PostgreSQL 14 で実際に採取したものです（cost の表示は省略）。',
+  evidence: [
+    ['work_mem を変えて同じソートを実行した結果',
+      '=# SET work_mem = \'64kB\'; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM orders ORDER BY created_at;\n                                            QUERY PLAN\n--------------------------------------------------------------------------------------------------\n Sort  (cost=21335.32..21585.32 rows=100000 width=60) (actual rows=100000 loops=1)\n   Sort Key: created_at\n   Sort Method: external merge  Disk: 4136kB\n   ->  Seq Scan on orders  (cost=0.00..1743.00 rows=100000 width=60) (actual rows=100000 loops=1)\n(4 rows)\n\n=# SET work_mem = \'32MB\'; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM orders ORDER BY created_at;\n                                            QUERY PLAN\n--------------------------------------------------------------------------------------------------\n Sort  (cost=10047.82..10297.82 rows=100000 width=60) (actual rows=100000 loops=1)\n   Sort Key: created_at\n   Sort Method: quicksort  Memory: 10885kB\n   ->  Seq Scan on orders  (cost=0.00..1743.00 rows=100000 width=60) (actual rows=100000 loops=1)\n(4 rows)']
+  ],
   refs: [
     ['EXPLAIN ANALYZE', 'using-explain.html#USING-EXPLAIN-ANALYZE'],
     ['work_mem', 'runtime-config-resource.html#GUC-WORK-MEM'],
@@ -1337,6 +1413,10 @@
   ],
   answer: [0, 1],
   exp: 'EXPLAIN ANALYZE の actual rows と Rows Removed by Filter は1回（1ループ）あたりの平均です。Parallel Seq Scan は loops=2（リーダーとワーカー1つ）なので、各プロセスが平均 270 行を返し、約 13 万 5 千行を読み捨てています。条件に合う行がごく一部なのに全件を読んでいるため、created_at にインデックスを作る余地があります。\nNested Loop の内側の Index Scan は loops=540（270 行 × 2 プロセス）で、外側の行ごとに customers_pkey を使って1行ずつ引いています。\nWorkers Launched: 1 はワーカーが1つ起動したことを表し、リーダー自身も処理に参加するため、合わせて2プロセスで実行しています。\nこの計画は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['パラレルクエリの実行計画（ワーカー2つ）',
+      '=# SET max_parallel_workers_per_gather = 2; SET parallel_setup_cost = 0; SET parallel_tuple_cost = 0; SET min_parallel_table_scan_size = 0; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, COSTS OFF) SELECT c.pref, count(*) FROM orders o JOIN customers c ON o.customer_id = c.id GROUP BY c.pref;\n                                                         QUERY PLAN\n-----------------------------------------------------------------------------------------------------------------------------\n Finalize GroupAggregate (actual rows=47 loops=1)\n   Group Key: c.pref\n   ->  Gather Merge (actual rows=141 loops=1)\n         Workers Planned: 2\n         Workers Launched: 2\n         ->  Sort (actual rows=47 loops=3)\n               Sort Key: c.pref\n               Sort Method: quicksort  Memory: 27kB\n               Worker 0:  Sort Method: quicksort  Memory: 27kB\n               Worker 1:  Sort Method: quicksort  Memory: 27kB\n               ->  Partial HashAggregate (actual rows=47 loops=3)\n                     Group Key: c.pref\n                     Batches: 1  Memory Usage: 24kB\n                     Worker 0:  Batches: 1  Memory Usage: 24kB\n                     Worker 1:  Batches: 1  Memory Usage: 24kB\n                     ->  Merge Join (actual rows=33333 loops=3)\n                           Merge Cond: (o.customer_id = c.id)\n                           ->  Parallel Index Only Scan using orders_customer_id_idx on orders o (actual rows=33333 loops=3)\n                                 Heap Fetches: 0\n                           ->  Index Scan using customers_pkey on customers c (actual rows=931 loops=3)\n(20 rows)']
+  ],
   refs: [
     ['EXPLAIN ANALYZE', 'using-explain.html#USING-EXPLAIN-ANALYZE'],
     ['パラレルプラン', 'parallel-plans.html'],
@@ -1506,6 +1586,10 @@
   ],
   answer: 0,
   exp: 'pg_stat_statements の実行時間（exec_time）は、文の実行にかかった経過時間で、実行中に発生したロック待ちの時間も含まれます。この例の UPDATE accounts は主キーで1行を更新するだけですが、別のトランザクションが同じ行を更新したまま待たせていたため、平均約9秒かかっていました。CPU やインデックスの問題ではないため、pg_stat_activity や log_lock_waits でロックの状況を確認します。\ntotal_ms（total_exec_time）は合計、mean_ms（mean_exec_time）は1回あたりの平均です。\n$1 などは、定数を正規化して同じ形の文をまとめたことを表します。\ncalls が少なくても、1回が長い文は利用者への影響が大きいことがあります。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['pg_stat_statements の出力',
+      'shared_preload_libraries\n--------------------------\n pg_stat_statements\n(1 row)\n\n=# SELECT calls, round(total_exec_time::numeric, 1) AS total_ms, round(mean_exec_time::numeric, 2) AS mean_ms, left(query, 50) AS query FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 5;\n calls | total_ms | mean_ms  |                       query\n-------+----------+----------+----------------------------------------------------\n     4 |  51077.2 | 12769.30 | SELECT pg_sleep($1)\n     4 |  25027.6 |  6256.90 | UPDATE accounts SET balance = balance + $1 WHERE i\n     4 |  12768.6 |  3192.16 | UPDATE orders SET amount = amount + $1\n     2 |   1054.7 |   527.36 | CREATE DATABASE evid\n     1 |    786.4 |   786.44 | CREATE DATABASE shop2\n(5 rows)']
+  ],
   refs: [
     ['pg_stat_statements', 'pgstatstatements.html'],
     ['明示的ロック', 'explicit-locking.html']

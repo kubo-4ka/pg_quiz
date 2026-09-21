@@ -69,6 +69,12 @@ for (const q of Q) {
   if (/前問|前の問題|次の問題|上の問題/.test(q.q)) err('問題文が他の問題を前提にしています（単独で成立させてください）');
   if (q.type !== undefined && q.type !== 'scenario') err("type は 'scenario' のみ指定できます（知識確認は省略）");
   if (typeof q.exp !== 'string' || !q.exp.trim()) err('解説がありません');
+  if (q.evidence !== undefined) {
+    if (!Array.isArray(q.evidence) || !q.evidence.length) err('evidence の形式が不正です');
+    else q.evidence.forEach((e) => {
+      if (!Array.isArray(e) || e.length !== 2 || typeof e[0] !== 'string' || !e[0].trim() || typeof e[1] !== 'string' || !e[1].trim()) err('evidence の形式が不正です');
+    });
+  }
   if (!Array.isArray(q.refs) || !q.refs.length) err('refs がありません');
   else q.refs.forEach((r) => { if (!Array.isArray(r) || r.length !== 2 || !r[0] || !r[1]) err('refs の形式が不正です'); });
   [q.q, q.exp, ...(q.choices || [])].forEach((s) => { if (oddBackticks(s)) warn('バッククォートの数が奇数です'); });

@@ -169,9 +169,21 @@
     modal({ title, body, buttons: [{ label: okLabel, cls: danger ? 'danger' : 'primary', onClick: onOk }, { label: 'キャンセル' }] });
   }
 
+  const EVIDENCE_OPEN_LINES = 12; // これより短い出力は開いた状態で表示する
+
+  /** 解説に添える、実機で採取した出力 */
+  function evidenceHtml(q) {
+    if (!q.evidence || !q.evidence.length) return '';
+    const items = q.evidence.map(([title, body]) => {
+      const lines = body.split('\n').length;
+      return `<details class="ev" ${lines <= EVIDENCE_OPEN_LINES ? 'open' : ''}><summary>${esc(title)} <span class="sum-note">${lines}行</span></summary><pre class="code">${esc(body)}</pre></details>`;
+    }).join('');
+    return `<div class="ev-box"><div class="ev-title">🖥 実際の出力</div>${items}</div>`;
+  }
+
   function explainHtml(q) {
     const refs = (q.refs || []).map(([t, u]) => `<li><a href="${esc(refUrl(u))}" target="_blank" rel="noopener">${esc(t)}</a></li>`).join('');
-    return `<div class="exp">${fmt(q.exp)}</div>` +
+    return `<div class="exp">${fmt(q.exp)}</div>` + evidenceHtml(q) +
       (refs ? `<div class="refs"><div class="refs-title">📖 参照ドキュメント</div><ul>${refs}</ul></div>` : '');
   }
 
@@ -480,6 +492,7 @@
       </ul>
       <p>学習データはこのブラウザ内（localStorage）にのみ保存されます。複数の端末で学習する場合は「設定・データ管理」から、一方でエクスポートしたファイルをもう一方で統合してください。</p>
       <p>ブラウザのメニューから「ホーム画面に追加」（「アプリをインストール」）すると、アプリのように起動できます。一度開いた後は、通信できない場所でも出題と解説を表示できます（解説のリンク先の文書を除く）。</p>
+      <p>解説を開いているときは、右上の「▴ 問題」で問題文と選択肢をたたんで、解説を画面いっぱいに表示できます。状況判断の問題では、解説に実際の出力を折り畳みで添えています。</p>
       <p>キーボード操作: 1〜5 または A〜E で選択、Enter で次へ、← → で模試の前後移動。</p>
       ${APP.version ? `<p class="muted">バージョン ${esc(APP.version)}</p>` : ''}
     </div></details>`;
@@ -810,12 +823,16 @@
     if (revealed) {
       const ok = gradeOk(q, chosen);
       const collapsed = ST().sheetCollapsed;
+      const wide = ST().expWide;
       sheet = `<section class="sheet ${ok ? 'ok' : 'ng'} ${collapsed ? 'collapsed' : ''}" id="sheet">
-        <button class="sheet-head" data-act="sheet" aria-expanded="${!collapsed}">
-          <span class="verdict">${ok ? '⭕ 正解' : chosen === -1 ? '💡 わからない' : '❌ 不正解'}</span>
-          <span class="small muted">正解は ${ansLetters(q, perm)}</span>
-          <span class="chev" id="sheetChev">${collapsed ? '解説を表示 ▴' : 'たたむ ▾'}</span>
-        </button>
+        <div class="sheet-head">
+          <button class="sheet-toggle" data-act="sheet" aria-expanded="${!collapsed}">
+            <span class="verdict">${ok ? '⭕ 正解' : chosen === -1 ? '💡 わからない' : '❌ 不正解'}</span>
+            <span class="small muted">正解は ${ansLetters(q, perm)}</span>
+            <span class="chev" id="sheetChev">${collapsed ? '解説を表示 ▴' : 'たたむ ▾'}</span>
+          </button>
+          <button class="icon-btn qfold-btn ${wide ? 'on' : ''}" data-act="qfold" id="qfoldBtn" aria-pressed="${wide}" ${collapsed ? 'hidden' : ''}>${wide ? '▾ 問題' : '▴ 問題'}</button>
+        </div>
         <div class="sheet-body">${explainHtml(q)}</div>
       </section>`;
     }
@@ -838,6 +855,7 @@
 
     $view.innerHTML = `<div class="quiz">${head}${body}${sheet}${foot}</div>`;
     bindQuiz();
+    applyExpWide();
 
     if (isMock) {
       tickTimer();
@@ -857,7 +875,8 @@
       prev: () => moveTo(D().session.idx - 1),
       flag: toggleFlag,
       submit: submitMock,
-      sheet: toggleSheet
+      sheet: toggleSheet,
+      qfold: toggleQFold
     };
     $view.querySelectorAll('[data-act]').forEach((el) => el.addEventListener('click', () => acts[el.dataset.act] && acts[el.dataset.act]()));
   }
@@ -945,8 +964,28 @@
     Store.save();
     const sheet = document.getElementById('sheet');
     sheet.classList.toggle('collapsed', s.sheetCollapsed);
-    sheet.querySelector('.sheet-head').setAttribute('aria-expanded', String(!s.sheetCollapsed));
+    sheet.querySelector('.sheet-toggle').setAttribute('aria-expanded', String(!s.sheetCollapsed));
     document.getElementById('sheetChev').textContent = s.sheetCollapsed ? '解説を表示 ▴' : 'たたむ ▾';
+    document.getElementById('qfoldBtn').hidden = s.sheetCollapsed;
+    applyExpWide();
+  }
+
+  /** 解説を広く表示するために、問題文と選択肢をたたむ */
+  function toggleQFold() {
+    const s = ST();
+    s.expWide = !s.expWide;
+    Store.save();
+    const btn = document.getElementById('qfoldBtn');
+    btn.classList.toggle('on', s.expWide);
+    btn.setAttribute('aria-pressed', String(s.expWide));
+    btn.textContent = s.expWide ? '▾ 問題' : '▴ 問題';
+    applyExpWide();
+  }
+
+  function applyExpWide() {
+    const s = ST();
+    const quiz = $view.querySelector('.quiz');
+    if (quiz) quiz.classList.toggle('exp-wide', !!s.expWide && !s.sheetCollapsed && !!document.getElementById('sheet'));
   }
 
   function tickTimer() {
@@ -1434,7 +1473,12 @@
     const gi = goalInfo();
     html += `<section class="card"><h2>🎯 目標設定</h2>
       <div class="grid-2">
-        <div class="field"><label class="label" for="goalDate">目標日</label><input class="input" type="date" id="goalDate" value="${esc(g.date)}"></div>
+        <div class="field"><label class="label" for="goalDate">目標日</label>
+          <div class="row-inline">
+            <input class="input" type="date" id="goalDate" value="${esc(g.date)}">
+            <button type="button" class="btn small ghost" data-act="goalClear" ${g.date ? '' : 'disabled'}>クリア</button>
+          </div>
+        </div>
         <div class="field"><label class="label" for="goalLaps">目標周回数</label><select class="input" id="goalLaps">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) => `<option value="${v}" ${+g.laps === v ? 'selected' : ''}>${v}周</option>`).join('')}</select></div>
       </div>
       <div class="field"><span class="label">対象</span><div class="seg" id="goalScope">
@@ -1603,7 +1647,9 @@
     }));
 
     const saveGoal = () => { Store.save(); rerender(renderAnalysis); };
-    document.getElementById('goalDate').addEventListener('change', (e) => { d.goal.date = e.target.value; saveGoal(); });
+    const setGoalDate = (v) => { d.goal.date = v; d.goal.snap = null; saveGoal(); };
+    document.getElementById('goalDate').addEventListener('change', (e) => setGoalDate(e.target.value));
+    $view.querySelector('[data-act="goalClear"]').addEventListener('click', () => setGoalDate(''));
     document.getElementById('goalLaps').addEventListener('change', (e) => { d.goal.laps = +e.target.value; saveGoal(); });
     $view.querySelectorAll('#goalScope button').forEach((b) => b.addEventListener('click', () => { d.goal.scope = b.dataset.v; saveGoal(); }));
     $view.querySelectorAll('#goalDays button').forEach((b) => b.addEventListener('click', () => {

@@ -123,6 +123,12 @@
   ],
   answer: 2,
   exp: 'パラレルワーカーはバックグラウンドワーカーとして起動されるため、実行時に max_worker_processes（既定 8）の空きと、パラレルクエリ全体の上限 max_parallel_workers（既定 8）の範囲内でしか起動できません。他のセッションのパラレルクエリやパラレルなインデックス作成などで枠が使われていると、計画上のワーカー数（Workers Planned）より実際に起動された数（Workers Launched）が少なくなります。\nワーカーが起動できなかった分はリーダープロセスが処理するため結果は正しく返りますが、期待した性能が出ないことがあります。',
+  evidence: [
+    ['max_parallel_workers = 1 の状態で、ワーカーを計画させた場合',
+      '（max_parallel_workers を 1 にして、4ワーカーを計画させた場合）\n=# SHOW max_parallel_workers;\n max_parallel_workers\n----------------------\n 1\n(1 row)\n\n=# SET max_parallel_workers_per_gather = 4; SET parallel_setup_cost = 0; SET parallel_tuple_cost = 0; SET min_parallel_table_scan_size = 0; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, COSTS OFF) SELECT count(*) FROM orders;\n                                                  QUERY PLAN\n---------------------------------------------------------------------------------------------------------------\n Finalize Aggregate (actual rows=1 loops=1)\n   ->  Gather (actual rows=2 loops=1)\n         Workers Planned: 2\n         Workers Launched: 1\n         ->  Partial Aggregate (actual rows=1 loops=2)\n               ->  Parallel Index Only Scan using orders_customer_id_idx on orders (actual rows=50000 loops=2)\n                     Heap Fetches: 0\n(7 rows)'],
+    ['余裕があるときは計画どおりの数が起動する',
+      '=# SET max_parallel_workers_per_gather = 2; SET parallel_setup_cost = 0; SET parallel_tuple_cost = 0; SET min_parallel_table_scan_size = 0; EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, COSTS OFF) SELECT c.pref, count(*) FROM orders o JOIN customers c ON o.customer_id = c.id GROUP BY c.pref;\n                                                         QUERY PLAN\n-----------------------------------------------------------------------------------------------------------------------------\n Finalize GroupAggregate (actual rows=47 loops=1)\n   Group Key: c.pref\n   ->  Gather Merge (actual rows=141 loops=1)\n         Workers Planned: 2\n         Workers Launched: 2\n         ->  Sort (actual rows=47 loops=3)\n               Sort Key: c.pref\n               Sort Method: quicksort  Memory: 27kB\n               Worker 0:  Sort Method: quicksort  Memory: 27kB\n               Worker 1:  Sort Method: quicksort  Memory: 27kB\n               ->  Partial HashAggregate (actual rows=47 loops=3)\n                     Group Key: c.pref\n                     Batches: 1  Memory Usage: 24kB\n                     Worker 0:  Batches: 1  Memory Usage: 24kB\n                     Worker 1:  Batches: 1  Memory Usage: 24kB\n                     ->  Merge Join (actual rows=33333 loops=3)\n                           Merge Cond: (o.customer_id = c.id)\n                           ->  Parallel Index Only Scan using orders_customer_id_idx on orders o (actual rows=33333 loops=3)\n                                 Heap Fetches: 0\n                           ->  Index Scan using customers_pkey on customers c (actual rows=931 loops=3)\n(20 rows)']
+  ],
   refs: [
     ['パラレルクエリはどのように動くのか', 'how-parallel-query-works.html'],
     ['max_parallel_workers', 'runtime-config-resource.html#GUC-MAX-PARALLEL-WORKERS'],
@@ -533,6 +539,10 @@
   ],
   answer: 0,
   exp: '「checkpoint starting: wal」は、WAL の量が max_wal_size に近づいたことによるチェックポイントであることを示します（時間経過によるものは「time」）。pg_stat_bgwriter でも、時間によるチェックポイント（checkpoints_timed）が 0、要求によるもの（checkpoints_req）が 66 回です。\nチェックポイントの間隔が checkpoint_warning（既定 30 秒）より短いと、この警告が出ます。チェックポイントが頻発すると、書き出しの I/O と、チェックポイント後の最初の更新で書かれる全ページイメージによって WAL の量も増えるため、HINT のとおり max_wal_size の引き上げを検討します。\nこの環境では max_wal_size を 32MB と小さくして大量の UPDATE を行い、PostgreSQL 14 で実際に再現しました。',
+  evidence: [
+    ['max_wal_size = 32MB にして更新を繰り返したときのログと pg_stat_bgwriter',
+      '2026-09-21 03:36:14.034 UTC [43596] HINT:  Consider increasing the configuration parameter "max_wal_size".\n2026-09-21 03:36:14.034 UTC [43596] LOG:  checkpoint starting: wal\n2026-09-21 03:36:15.727 UTC [43596] LOG:  checkpoint complete: wrote 869 buffers (5.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.601 s, sync=0.079 s, total=1.694 s; sync files=5, longest=0.062 s, average=0.016 s; distance=21194 kB, estimate=39462 kB\n2026-09-21 03:36:15.727 UTC [43596] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-21 03:36:15.727 UTC [43596] HINT:  Consider increasing the configuration parameter "max_wal_size".\n=# SELECT checkpoints_timed, checkpoints_req, buffers_checkpoint, buffers_backend FROM pg_stat_bgwriter;\n checkpoints_timed | checkpoints_req | buffers_checkpoint | buffers_backend\n-------------------+-----------------+--------------------+-----------------\n                 0 |               9 |              15480 |            3824\n(1 row)']
+  ],
   refs: [
     ['WALの設定', 'wal-configuration.html'],
     ['チェックポイント', 'runtime-config-wal.html#RUNTIME-CONFIG-WAL-CHECKPOINTS'],
@@ -552,6 +562,10 @@
   ],
   answer: [0, 1],
   exp: 'log_temp_files は、指定したサイズ（kB）以上の一時ファイルを削除時にログへ記録するパラメータです。0 ならすべてを記録し、-1（既定）なら記録しません。\n一時ファイルは、ソートやハッシュ結合・集約が work_mem（ハッシュは hash_mem_multiplier も考慮）に収まらないときに、データベースのディレクトリ内の pgsql_tmp に作られます。ファイル名の数字は作成したプロセスの PID で、この例ではパラレルクエリのリーダーとワーカーがそれぞれ作っています。\n一時ファイルは処理が終わると自動的に削除され、WAL には記録されません。\n該当の問い合わせを特定するには、log_line_prefix やこのログの前後に出る STATEMENT を確認します。\nこのログは PostgreSQL 14 で work_mem = 1MB にして実際に出力させたものです。',
+  evidence: [
+    ['work_mem を小さくしてソートしたときのログと pg_stat_database',
+      '=# SELECT datname, deadlocks, temp_files, pg_size_pretty(temp_bytes) AS temp_bytes, conflicts FROM pg_stat_database WHERE datname = \'evid3\';\n datname | deadlocks | temp_files | temp_bytes | conflicts\n---------+-----------+------------+------------+-----------\n evid3   |         1 |          3 | 7704 kB    |         0\n(1 row)\n\n--- サーバログ（log_temp_files = 0 相当）\n2026-09-21 03:35:56.796 UTC [77169] postgres@evid3 LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp77169.0", size 2629632\n2026-09-21 03:35:56.918 UTC [77175] postgres@evid3 LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp77175.0", size 2629632']
+  ],
   refs: [
     ['log_temp_files', 'runtime-config-logging.html#GUC-LOG-TEMP-FILES'],
     ['work_mem', 'runtime-config-resource.html#GUC-WORK-MEM'],
@@ -626,6 +640,10 @@
   ],
   answer: 3,
   exp: 'created_at 列そのものに作成した B-tree インデックスは、created_at と定数を比較する条件（=、<、<=、>=、> など）で利用できます。そのため、範囲条件 created_at >= \'2026-01-01\' AND created_at < \'2026-01-02\' に書き換えるとインデックススキャンが可能になります。\n列に関数やキャストを適用した条件（date_trunc()、::date、to_char()、::text など）では、列のインデックスは使われません。どうしてもその形で検索する必要がある場合は、同じ式に対する式インデックスを作成します（式に使う関数は IMMUTABLE である必要があります）。',
+  evidence: [
+    ['1年分のデータで、書き方を変えて実行計画を比べた結果',
+      '=# SELECT min(created_at), max(created_at), count(*) FROM logs;\n         min         |         max         | count\n---------------------+---------------------+--------\n 2026-01-01 00:05:00 | 2026-12-14 05:20:00 | 100000\n(1 row)\n\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM logs WHERE created_at >= \'2026-01-01\' AND created_at < \'2026-01-02\';\n                                                                        QUERY PLAN\n----------------------------------------------------------------------------------------------------------------------------------------------------------\n Index Scan using logs_created_at_idx on logs  (cost=0.29..14.99 rows=285 width=12) (actual rows=287 loops=1)\n   Index Cond: ((created_at >= \'2026-01-01 00:00:00\'::timestamp without time zone) AND (created_at < \'2026-01-02 00:00:00\'::timestamp without time zone))\n(2 rows)\n\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM logs WHERE created_at::date = \'2026-01-01\';\n                                     QUERY PLAN\n------------------------------------------------------------------------------------\n Seq Scan on logs  (cost=0.00..2041.00 rows=500 width=12) (actual rows=287 loops=1)\n   Filter: ((created_at)::date = \'2026-01-01\'::date)\n   Rows Removed by Filter: 99713\n(3 rows)\n\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM logs WHERE to_char(created_at, \'YYYY-MM-DD\') = \'2026-01-01\';\n                                     QUERY PLAN\n------------------------------------------------------------------------------------\n Seq Scan on logs  (cost=0.00..2041.00 rows=500 width=12) (actual rows=287 loops=1)\n   Filter: (to_char(created_at, \'YYYY-MM-DD\'::text) = \'2026-01-01\'::text)\n   Rows Removed by Filter: 99713\n(3 rows)\n\n（式インデックスを作れば、式での検索にもインデックスを使える）\n=# CREATE INDEX logs_created_date_idx ON logs ((created_at::date));\nCREATE INDEX\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT * FROM logs WHERE created_at::date = \'2026-01-01\';\n                                                   QUERY PLAN\n----------------------------------------------------------------------------------------------------------------\n Index Scan using logs_created_date_idx on logs  (cost=0.29..14.30 rows=286 width=12) (actual rows=287 loops=1)\n   Index Cond: ((created_at)::date = \'2026-01-01\'::date)\n(2 rows)']
+  ],
   refs: [
     ['B-treeインデックス', 'indexes-types.html#INDEXES-TYPES-BTREE'],
     ['式に対するインデックス', 'indexes-expressional.html']
@@ -899,6 +917,10 @@
   ],
   answer: 0,
   exp: 'CREATE INDEX ... WHERE status = \'pending\' は、条件を満たす行だけを対象にした部分インデックスです。全体の 1% しか含まないため小さく、更新時の維持コストも抑えられます。\n(1) では customer_id のインデックスで候補を集めてから、テーブルを読んで status の条件で読み捨てていました（Filter / Rows Removed by Filter）。(2) では部分インデックス自体が status = \'pending\' の行しか持たないため、Index Cond だけで済み、Filter がなくなっています。\n部分インデックスは、問い合わせの WHERE 句がインデックスの条件を含意すると判断できる場合にしか使われません。status の条件がない問い合わせでは使えません。\nBitmap Heap Scan と Index Scan の優劣は、該当行数などによって変わります。\nこの計画は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['部分インデックスを作る前と後の実行計画、インデックスの大きさ',
+      '=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT id, amount FROM orders WHERE customer_id = 500 AND status = \'pending\';\n                                                   QUERY PLAN\n-----------------------------------------------------------------------------------------------------------------\n Bitmap Heap Scan on orders  (cost=5.04..282.24 rows=1 width=8) (actual rows=0 loops=1)\n   Recheck Cond: (customer_id = 500)\n   Filter: (status = \'pending\'::text)\n   Rows Removed by Filter: 100\n   Heap Blocks: exact=8\n   ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..5.04 rows=100 width=0) (actual rows=100 loops=1)\n         Index Cond: (customer_id = 500)\n(7 rows)\n\n=# CREATE INDEX orders_pending_idx ON orders (customer_id) WHERE status = \'pending\';\nCREATE INDEX\n=# EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF) SELECT id, amount FROM orders WHERE customer_id = 500 AND status = \'pending\';\n                                               QUERY PLAN\n---------------------------------------------------------------------------------------------------------\n Index Scan using orders_pending_idx on orders  (cost=0.15..8.17 rows=1 width=8) (actual rows=0 loops=1)\n   Index Cond: (customer_id = 500)\n(2 rows)\n\n=# SELECT pg_size_pretty(pg_relation_size(\'orders_customer_id_idx\')) AS all_rows_idx, pg_size_pretty(pg_relation_size(\'orders_pending_idx\')) AS partial_idx;\n all_rows_idx | partial_idx\n--------------+-------------\n 688 kB       | 16 kB\n(1 row)']
+  ],
   refs: [
     ['部分インデックス', 'indexes-partial.html'],
     ['EXPLAIN の使用', 'using-explain.html']
@@ -917,6 +939,10 @@
   ],
   answer: [0, 1],
   exp: 'pg_settings の setting は unit を単位とした現在値です。shared_buffers は 16384 × 8kB = 128MB のままで、context が postmaster（起動時にしか変更できない）のため、再読み込みしても反映されず pending_restart が t になっています。\nwork_mem は context が user なので再読み込みで反映され、8192 kB = 8MB になっています。\nmax_connections も postmaster なので、SET では変更できず、再起動が必要です。\nlog_lock_waits の context は superuser で、一般ユーザは SET で変更できません。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['ALTER SYSTEM と pg_reload_conf() の後の pg_settings と postgresql.auto.conf',
+      '=# SELECT name, setting, unit, context, pending_restart FROM pg_settings WHERE name IN (\'shared_buffers\',\'work_mem\',\'max_connections\',\'log_lock_waits\');\n      name       | setting | unit |  context   | pending_restart\n-----------------+---------+------+------------+-----------------\n log_lock_waits  | on      |      | superuser  | f\n max_connections | 100     |      | postmaster | f\n shared_buffers  | 16384   | 8kB  | postmaster | t\n work_mem        | 8192    | kB   | user       | f\n(4 rows)\n\n--- postgresql.auto.conf\n# Do not edit this file manually!\n# It will be overwritten by the ALTER SYSTEM command.\nlog_lock_waits = \'on\'\ndeadlock_timeout = \'1s\'\nlog_temp_files = \'0\'\nshared_buffers = \'256MB\'\nwork_mem = \'8MB\'']
+  ],
   refs: [
     ['pg_settings', 'view-pg-settings.html'],
     ['ALTER SYSTEM', 'sql-altersystem.html']

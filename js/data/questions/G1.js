@@ -54,6 +54,10 @@
   ],
   answer: 2,
   exp: 'ALTER DATABASE ... SET や ALTER ROLE ... SET で設定した値は、新しいセッションの開始時に適用され、設定ファイルやサーバのコマンドラインの値を上書きします。\n両方が設定されている場合は、ロール単位の設定がデータベース単位の設定より優先されます。さらに ALTER ROLE ... IN DATABASE ... SET によるロールとデータベースの組み合わせの設定は、それらよりも優先されます。\nしたがって alice が db1 に接続した場合は 16MB になります（セッション内で SET を実行すれば、さらにその値で上書きされます）。',
+  evidence: [
+    ['設定の組み合わせと、接続直後の work_mem（実機で確認）',
+      'database |    role    |    setconfig\n----------+------------+-----------------\n (全DB)   | webuser    | {work_mem=32MB}\n app      | (全ロール) | {work_mem=16MB}\n app      | webuser    | {work_mem=64MB}\n(3 rows)\n\nwork_mem = \'8MB\'\n\npostgres  → postgres  : 8MB\npostgres  → app       : 16MB\nwebuser   → postgres  : 32MB\nwebuser   → app       : 64MB']
+  ],
   refs: [
     ['SQLを通じたパラメータ操作', 'config-setting.html#CONFIG-SETTING-SQL-COMMAND-INTERACTION'],
     ['ALTER ROLE', 'sql-alterrole.html'],
@@ -105,6 +109,10 @@
   ],
   answer: 0,
   exp: 'listen_addresses はサーバがクライアントからの接続を待ち受ける IP アドレスを指定するパラメータで、既定値は localhost です。他のホストから接続させるには、\'*\'（すべてのインタフェース）や特定のアドレスを指定してサーバを再起動し、さらに pg_hba.conf で接続元のアドレスを許可する必要があります。\nport の既定値は 5432、max_connections の既定値は 100 です。SSL を使わない TCP/IP 接続も可能で、Unix ドメインソケットの設定は TCP/IP の待ち受けとは独立しています。',
+  evidence: [
+    ['listen_addresses の既定値と、設定を変えたときの接続',
+      'name       | setting | boot_val  |  context\n------------------+---------+-----------+------------\n listen_addresses | *       | localhost | postmaster\n port             | 5432    | 5432      | postmaster\n(2 rows)\n\n--- postgresql.conf の該当行（既定のまま = コメントアウト）\n60:#listen_addresses = \'localhost\'		# what IP address(es) to listen on;\n799:listen_addresses = \'*\'\n--- listen_addresses = localhost にして再起動した場合\n$ psql -h 10.0.2.15 -U postgres -d shop -c "SELECT 1;"\npsql: error: connection to server at "10.0.2.15", port 5432 failed: Connection refused\n	Is the server running on that host and accepting TCP/IP connections?\n$ psql -h 127.0.0.1 -U postgres -d shop -c "SELECT 1;"\n ?column?\n----------\n        1\n--- listen_addresses = * に戻して再起動\n$ psql -h 10.0.2.15 -U postgres -d shop -c "SELECT 1;"\npsql: error: connection to server at "10.0.2.15", port 5432 failed: FATAL:  no pg_hba.conf entry for host "10.0.2.15", user "postgres", database "shop", no encryption']
+  ],
   refs: [
     ['listen_addresses', 'runtime-config-connection.html#GUC-LISTEN-ADDRESSES'],
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html']
@@ -392,6 +400,10 @@
   ],
   answer: [0, 1],
   exp: 'PostgreSQL 14 で実際に試した結果は次のとおりです。\n・bob → shop（127.0.0.1）: 3行目は database が sales なので一致せず、4行目の scram-sha-256 に一致して接続できます。\n・carol → sales（ソケット）: 2行目の local / scram-sha-256 に一致し、正しいパスワードで接続できます。\n・alice → sales（10.0.2.15）: host の行はすべて 127.0.0.1/32 限定なので一致せず、`FATAL:  no pg_hba.conf entry for host "10.0.2.15", user "alice", database "sales", no encryption` で拒否されます。サーバ自身の IP アドレスからの接続でも、127.0.0.1 とは別のアドレスとして扱われます。\n・alice の誤ったパスワード: 4行目で認証に失敗した時点で `FATAL:  password authentication failed for user "alice"` となり、後続の行は試されません。\n・carol のパスワードなし: パスワードが要求され、psql に -w（入力を求めない）を付けていると `fe_sendauth: no password supplied` で失敗します。',
+  evidence: [
+    ['問題と同じ pg_hba.conf での接続結果',
+      'local   all             postgres                                peer\nlocal   all             all                                     scram-sha-256\nhost    sales           bob             127.0.0.1/32            reject\nhost    all             all             127.0.0.1/32            scram-sha-256\nhost    replication     postgres        127.0.0.1/32            trust\n--- bob が 127.0.0.1 から sales へ（パスワード正しい）\n$ psql -h 127.0.0.1 -U bob -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "127.0.0.1", user "bob", database "sales", no encryption\n\n--- bob が 127.0.0.1 から shop へ（パスワード正しい）\n$ psql -h 127.0.0.1 -U bob -d shop\nconnected as bob\n\n--- alice が 127.0.0.1 から sales へ（パスワード誤り）\n$ psql -h 127.0.0.1 -U alice -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "alice"\n\n--- alice が 10.0.2.15 から sales へ\n$ psql -h 10.0.2.15 -U alice -d sales\npsql: error: connection to server at "10.0.2.15", port 5432 failed: FATAL:  no pg_hba.conf entry for host "10.0.2.15", user "alice", database "sales", no encryption\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワードなし）\n$ psql  -U carol -d sales\npsql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: fe_sendauth: no password supplied\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワード正しい）\n$ psql  -U carol -d sales\nconnected as carol']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html'],
     ['パスワード認証', 'auth-password.html']
@@ -410,6 +422,10 @@
   ],
   answer: 0,
   exp: 'pg_hba.conf は上から順に評価され、最初に一致した行だけが使われます。条件の限定度や認証方式の強さによる優先順位はありません。この例では2行目の「host all all 127.0.0.1/32 trust」に先に一致するため、3行目の reject は評価されません。\ntrust はパスワードを確認せずに接続を許可する方式なので、誤ったパスワードでも接続できます。実際に試すと、bob として接続に成功しました。\n特定の接続だけを拒否・制限したい場合は、その行を広く許可する行より上に書く必要があります。',
+  evidence: [
+    ['trust の行を先に書いた場合の接続結果',
+      'local   all             postgres                                peer\nhost    all             all             127.0.0.1/32            trust\nhost    sales           bob             127.0.0.1/32            reject\nhost    replication     postgres        127.0.0.1/32            trust\n--- bob が 127.0.0.1 から sales へ（パスワード誤り）\n$ psql -h 127.0.0.1 -U bob -d sales\nconnected as bob']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html'],
     ['trust認証', 'auth-trust.html']
@@ -428,6 +444,10 @@
   ],
   answer: [0, 1],
   exp: 'データベース欄の sameuser は「接続先のデータベース名がロール名と同じ場合」に一致します。alice → alice は2行目に一致して接続できます。\nユーザ欄の「+ロール名」は、そのロールのメンバー（直接・間接）に一致します。carol は sales_team のメンバーなので、3行目に一致して sales に接続できます。\n実際に試した結果は次のとおりです。\n・alice → sales: sameuser に一致せず、+sales_team のメンバーでもないため `no pg_hba.conf entry for host "127.0.0.1", user "alice", database "sales"` で拒否されました。\n・carol → carol: pg_hba.conf の2行目には一致しますが、`FATAL:  database "carol" does not exist` になりました。\n・carol → sales_team や postgres → sales（TCP/IP）には一致する行がありません。',
+  evidence: [
+    ['sameuser と +グループを使った場合の接続結果',
+      'local   all             postgres                                peer\nhost    sameuser        all             127.0.0.1/32            scram-sha-256\nhost    sales           +sales_team     127.0.0.1/32            scram-sha-256\nhost    replication     postgres        127.0.0.1/32            trust\n--- alice が 127.0.0.1 から alice へ\n$ psql -h 127.0.0.1 -U alice -d alice\nconnected as alice\n\n--- alice が 127.0.0.1 から sales へ\n$ psql -h 127.0.0.1 -U alice -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  no pg_hba.conf entry for host "127.0.0.1", user "alice", database "sales", no encryption\n\n--- carol が 127.0.0.1 から sales へ\n$ psql -h 127.0.0.1 -U carol -d sales\nconnected as carol\n\n--- carol が 127.0.0.1 から carol へ\n$ psql -h 127.0.0.1 -U carol -d carol\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  database "carol" does not exist']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html'],
     ['ロールのメンバ資格', 'role-membership.html']
@@ -446,6 +466,10 @@
   ],
   answer: [0, 1],
   exp: 'pg_hba.conf に1行でも誤りがあると、再読み込みの際にファイル全体の適用が見送られ、「pg_hba.conf was not reloaded」と記録されます。このとき有効なのは直前に読み込まれた設定のままです。実際に試すと、編集後のファイルには 127.0.0.1 の全ロールを対象とする行（3行目）があるにもかかわらず、編集前の設定に基づいて `no pg_hba.conf entry` で拒否されました。\npg_hba_file_rules はファイルの現在の内容を解析して表示するビューで、error 列に構文エラーが表示されます。再読み込み前の確認に使えます。\nサーバは停止せず、誤りを直して再読み込みすれば反映されます（pg_hba.conf の変更に再起動は不要です）。',
+  evidence: [
+    ['記述ミスのある pg_hba.conf を再読み込みした場合',
+      'local   all             postgres                                peer\nhost    all             all             127.0.0.1/32            scram-sha-256\nhost    sales           bob             192.168.10.0/24         md55\nhost    replication     postgres        127.0.0.1/32            trust\n--- サーバログ ---\n2026-09-17 06:33:00.465 UTC [6059] LOG:  received SIGHUP, reloading configuration files\n2026-09-17 06:33:01.649 UTC [6059] LOG:  received SIGHUP, reloading configuration files\n2026-09-17 06:33:01.650 UTC [6059] LOG:  invalid authentication method "md55"\n2026-09-17 06:33:01.650 UTC [6059] LOG:  pg_hba.conf was not reloaded\n--- 再読み込み前の設定のまま? trust の行がない構成で bob が 127.0.0.1 から shop にパスワード誤りで接続 ---\n--- bob が 127.0.0.1 から shop へ（パスワード誤り）\n$ psql -h 127.0.0.1 -U bob -d shop\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  no pg_hba.conf entry for host "127.0.0.1", user "bob", database "shop", no encryption\n\nrestored']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html'],
     ['pg_hba_file_rules', 'view-pg-hba-file-rules.html']
@@ -465,6 +489,10 @@
   answer: 3,
   shuffle: false,
   exp: 'ロールとデータベースの両方に関係する設定は、影響範囲が狭いほど優先されます。優先度の高い順に、ALTER ROLE ... IN DATABASE（ロールとデータベースの組み合わせ）、ALTER ROLE（ロール単位）、ALTER DATABASE（データベース単位）、その後に postgresql.auto.conf、postgresql.conf の順です。\n実際に PostgreSQL 14 で接続を変えて確認した結果は次のとおりです。\n・postgres → postgres: 8MB（ALTER SYSTEM の値）\n・postgres → app: 16MB（ALTER DATABASE の値）\n・webuser → postgres: 32MB（ALTER ROLE の値）\n・webuser → app: 64MB（ALTER ROLE ... IN DATABASE の値）\nこれらの設定は接続の開始時に適用されるため、変更後に新しく接続したセッションから有効になります。設定内容は pg_db_role_setting カタログ（psql の \\drds）で確認できます。',
+  evidence: [
+    ['設定の組み合わせと、接続直後の work_mem（実機で確認）',
+      'database |    role    |    setconfig\n----------+------------+-----------------\n (全DB)   | webuser    | {work_mem=32MB}\n app      | (全ロール) | {work_mem=16MB}\n app      | webuser    | {work_mem=64MB}\n(3 rows)\n\nwork_mem = \'8MB\'\n\npostgres  → postgres  : 8MB\npostgres  → app       : 16MB\nwebuser   → postgres  : 32MB\nwebuser   → app       : 64MB']
+  ],
   refs: [
     ['パラメータの設定', 'config-setting.html'],
     ['ALTER ROLE', 'sql-alterrole.html'],
@@ -484,6 +512,10 @@
   ],
   answer: [0, 1],
   exp: 'pg_db_role_setting には ALTER DATABASE / ALTER ROLE で設定した値が入っています。setdatabase が 0（全DB）ならロール単位、setrole が 0（全ロール）ならデータベース単位、両方あれば組み合わせの設定です。\n実際に接続して確認した結果は、postgres → postgres が 8MB（どれにも当てはまらず postgresql.auto.conf の値）、postgres → app が 16MB、webuser → postgres が 32MB、webuser → app が 64MB でした。\nPGOPTIONS や接続文字列の options で接続時に指定した値は、ALTER ROLE / ALTER DATABASE の設定より優先されます。実際に `PGOPTIONS="-c work_mem=1MB"` で webuser → app に接続すると 1MB になりました。',
+  evidence: [
+    ['設定の一覧と、ロール・データベースの組み合わせごとの値',
+      'database |    role    |    setconfig\n----------+------------+-----------------\n (全DB)   | webuser    | {work_mem=32MB}\n app      | (全ロール) | {work_mem=16MB}\n app      | webuser    | {work_mem=64MB}\n(3 rows)\n\nwork_mem = \'8MB\'\n\npostgres  → postgres  : 8MB\npostgres  → app       : 16MB\nwebuser   → postgres  : 32MB\nwebuser   → app       : 64MB']
+  ],
   refs: [
     ['パラメータの設定', 'config-setting.html'],
     ['pg_db_role_setting', 'catalog-pg-db-role-setting.html'],
@@ -539,6 +571,12 @@
   answer: 3,
   shuffle: false,
   exp: 'VACUUM の閾値は次の式で求められます。\nバキューム閾値 = autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × タプル数\n既定値は autovacuum_vacuum_threshold = 50、autovacuum_vacuum_scale_factor = 0.2 なので、50 + 0.2 × 10000 = 2050 となり、不要タプル数が 2050 を超えるとバキュームの対象となります。\nなお PostgreSQL 13 以降は、INSERT 数に基づく閾値（autovacuum_vacuum_insert_threshold = 1000、autovacuum_vacuum_insert_scale_factor = 0.2）でもバキュームが実行されます。ANALYZE の閾値は autovacuum_analyze_threshold（50）+ autovacuum_analyze_scale_factor（0.1）× タプル数です。',
+  evidence: [
+    ['自動バキュームの関連パラメータ（既定値）としきい値の計算',
+      'name                  | setting\n---------------------------------------+---------\n autovacuum                            | on\n autovacuum_naptime                    | 60\n autovacuum_vacuum_insert_scale_factor | 0.2\n autovacuum_vacuum_insert_threshold    | 1000\n autovacuum_vacuum_scale_factor        | 0.2\n autovacuum_vacuum_threshold           | 50\n(6 rows)\n\n=# SELECT reltuples FROM pg_class WHERE relname = \'av\';\n reltuples\n-----------\n     10000\n(1 row)\n\n（しきい値 = 50 + 0.2 × 10000 = 2050 行）\n=# SELECT 50 + 0.2 * reltuples AS threshold FROM pg_class WHERE relname = \'av\';\n threshold\n-----------\n      2050\n(1 row)'],
+    ['実際に更新を重ねたときの n_dead_tup と自動バキュームのログ',
+      '=# SELECT relname, n_live_tup, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE relname = \'av2\';\n relname | n_live_tup | n_dead_tup | last_autovacuum | autovacuum_count\n---------+------------+------------+-----------------+------------------\n av2     |      20000 |          0 |                 |                0\n(1 row)\n\n（しきい値 = autovacuum_vacuum_threshold 50 + autovacuum_vacuum_scale_factor 0.2 × 10000 行 = 2050）\n\n--- 2000 行更新（しきい値 2050 未満）\n=# SELECT relname, n_live_tup, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE relname = \'av2\';\n relname | n_live_tup | n_dead_tup |        last_autovacuum        | autovacuum_count\n---------+------------+------------+-------------------------------+------------------\n av2     |      10000 |          0 | 2026-09-21 03:51:59.790731+00 |                1\n(1 row)\n\n--- さらに 500 行更新（合計 2500 行でしきい値を超える）\n=# SELECT relname, n_live_tup, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE relname = \'av2\';\n relname | n_live_tup | n_dead_tup |        last_autovacuum        | autovacuum_count\n---------+------------+------------+-------------------------------+------------------\n av2     |      10000 |        500 | 2026-09-21 03:51:59.790731+00 |                1\n(1 row)\n\n--- サーバログ（log_autovacuum_min_duration = 0）\n	pages: 0 removed, 54 remain, 0 skipped due to pins, 0 skipped frozen\n	tuples: 2000 removed, 9868 remain, 0 are dead but not yet removable, oldest xmin: 1192\n	index scan needed: 9 pages from table (16.67% of total) had 2000 dead item identifiers removed\n--\n2026-09-21 03:54:01.466 UTC [131958] LOG:  automatic vacuum of table "shop.public.av2": index scans: 1\n	pages: 0 removed, 91 remain, 0 skipped due to pins, 0 skipped frozen\n	tuples: 10034 removed, 10000 remain, 0 are dead but not yet removable, oldest xmin: 1195\n	index scan needed: 47 pages from table (51.65% of total) had 10405 dead item identifiers removed']
+  ],
   refs: [
     ['自動バキュームデーモン', 'routine-vacuuming.html#AUTOVACUUM'],
     ['自動Vacuum作業のパラメータ', 'runtime-config-autovacuum.html']
@@ -675,6 +713,10 @@
   ],
   answer: 1,
   exp: 'WAL アーカイブが有効な場合、archive_command が成功するまでその WAL ファイルは削除・再利用されません。コマンドが失敗し続けると pg_wal に WAL が蓄積し、最終的にディスク満杯を引き起こします。サーバログや pg_stat_archiver ビューの failed_count などで確認します。\nほかに、使われていないレプリケーションスロットや wal_keep_size の設定も WAL の保持量を増やす原因になります。\n通常、チェックポイント後に不要になった WAL は自動的に削除またはリサイクルされるため、手動で削除してはいけません。一時ファイルは base/pgsql_tmp（または temp_tablespaces）に作成されます。',
+  evidence: [
+    ['スタンバイを止めた状態でレプリケーションスロットが WAL を保持し続ける様子',
+      'pg_reload_conf\n----------------\n t\n(1 row)\n\n slot_name | slot_type | active | restart_lsn | wal_status | safe_wal_size\n-----------+-----------+--------+-------------+------------+---------------\n standby1  | physical  | f      | 0/1A456D28  | reserved   | 76 MB\n(1 row)\n\n slot_name | slot_type | active | restart_lsn | wal_status | safe_wal_size\n-----------+-----------+--------+-------------+------------+---------------\n standby1  | physical  | f      |             | lost       |\n(1 row)\n\n--- プライマリのログ ---\n2026-09-17 06:44:20.556 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-17 06:44:22.291 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-17 06:44:23.816 UTC [6062] LOG:  checkpoints are occurring too frequently (1 second apart)\n2026-09-17 06:44:25.643 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)']
+  ],
   refs: [
     ['WALの設定', 'wal-configuration.html'],
     ['WALアーカイブの設定', 'continuous-archiving.html#BACKUP-ARCHIVING-WAL'],
@@ -760,6 +802,10 @@
   ],
   answer: 2,
   exp: 'checkpoint_warning（既定 30s）は、WAL の量（max_wal_size）を契機とするチェックポイントが、この時間より短い間隔で連続して発生した場合に、サーバログへ警告を出力するパラメータです。0 にすると警告は無効になります。\nこの警告が頻繁に出る場合は、大量の更新によって WAL が多く生成され、チェックポイントが過剰に発生しています。チェックポイントは大量の書き込みを伴うため、max_wal_size を大きくしてチェックポイントの間隔を空けることを検討します。pg_stat_bgwriter の checkpoints_req（要求によるチェックポイント回数）でも確認できます。',
+  evidence: [
+    ['チェックポイントが頻発する状態のログと pg_stat_bgwriter',
+      'pg_reload_conf\n----------------\n t\n(1 row)\n\n2026-09-17 06:45:11.339 UTC [6062] LOG:  checkpoint complete: wrote 1111 buffers (6.8%); 0 WAL file(s) added, 1 removed, 0 recycled; write=0.618 s, sync=0.018 s, total=0.649 s; sync files=3, longest=0.011 s, average=0.006 s; distance=18448 kB, estimate=29879 kB\n2026-09-17 06:45:11.339 UTC [6062] LOG:  checkpoints are occurring too frequently (1 second apart)\n2026-09-17 06:45:11.339 UTC [6062] HINT:  Consider increasing the configuration parameter "max_wal_size".\n2026-09-17 06:45:11.339 UTC [6062] LOG:  checkpoint starting: wal\n checkpoints_timed | checkpoints_req | buffers_checkpoint | buffers_backend | maxwritten_clean\n-------------------+-----------------+--------------------+-----------------+------------------\n                 0 |              66 |             128074 |           42736 |               12\n(1 row)\n\n pg_reload_conf\n----------------\n t\n(1 row)']
+  ],
   refs: [
     ['checkpoint_warning', 'runtime-config-wal.html#GUC-CHECKPOINT-WARNING'],
     ['WALの設定', 'wal-configuration.html']
@@ -863,6 +909,10 @@
   ],
   answer: 0,
   exp: 'アーカイブ先の WAL はサーバが自動的に削除しないため、運用者が管理する必要があります。pg_archivecleanup は、指定した WAL ファイルより古いアーカイブを削除するツールで、単独で実行するほか、スタンバイの archive_cleanup_command に指定して使うこともできます。\n削除してよいのは、保持しているベースバックアップのリカバリに不要になったものだけです。まだ必要な WAL を消すと PITR ができなくなります。\npg_resetwal は停止中のデータディレクトリの WAL を初期化する緊急用のツールで、アーカイブの整理には使いません。',
+  evidence: [
+    ['pg_archivecleanup で、バックアップより古いアーカイブを整理した例',
+      'ERROR:  duplicate key value violates unique constraint "av_pkey"\nDETAIL:  Key (id)=(100001) already exists.\nERROR:  duplicate key value violates unique constraint "av_pkey"\nDETAIL:  Key (id)=(100001) already exists.\n$ ls archive/\n000000010000000000000092\n000000010000000000000092.00000028.backup\n000000010000000000000093\n000000010000000000000094\n000000010000000000000095\n000000010000000000000099\n$ ls base2/ | grep backup_label\nbackup_label\nbackup_manifest\nバックアップの開始位置を示すファイル: 000000010000000000000092.00000028.backup\n$ pg_archivecleanup -n archive/ <上記のファイル>   （-n は削除せずに一覧表示）\n/var/lib/pgsql/14/backup/archive/000000010000000000000074\n/var/lib/pgsql/14/backup/archive/000000010000000000000076\n/var/lib/pgsql/14/backup/archive/000000010000000000000078\n/var/lib/pgsql/14/backup/archive/00000001000000000000007A\n/var/lib/pgsql/14/backup/archive/00000001000000000000007B\n$ pg_archivecleanup archive/ <上記のファイル>\n$ ls archive/\n000000010000000000000092.00000028.backup\n000000010000000000000093\n000000010000000000000094\n000000010000000000000095\n000000010000000000000099']
+  ],
   refs: [
     ['pg_archivecleanup', 'pgarchivecleanup.html'],
     ['継続的アーカイブ', 'continuous-archiving.html']
@@ -1105,6 +1155,10 @@
   ],
   answer: 0,
   exp: 'n_dead_tup は不要タプル（どのトランザクションからも見えなくなった古い行バージョン）の推定数です。UPDATE でも古いバージョンが残るため、この例では UPDATE の 10 万件と DELETE の 3 万件を合わせた 13 万件が不要タプルになっています。\nテーブル単位で autovacuum_enabled = off にしているため自動バキュームは動かず、last_autovacuum は空のままです。手動で VACUUM を実行します。実際に VACUUM を実行すると、各インデックスから 130000 件の行バージョンが削除されました。\n通常の VACUUM で不要タプルの領域は再利用できるようになります。ファイルを縮めて OS に返す必要がある場合だけ、排他ロックを伴う VACUUM FULL を検討します。\n自動バキュームは不要タプルの割合（既定 20%）としきい値で起動するため、件数の大小だけで不要と判断はできません。',
+  evidence: [
+    ['自動バキュームを無効にしたテーブルの pg_stat_user_tables',
+      'relname | n_live_tup | n_dead_tup | n_tup_upd | n_tup_hot_upd | n_tup_del | last_vacuum | last_autovacuum |         last_analyze          | seq_scan | idx_scan\n---------+------------+------------+-----------+---------------+-----------+-------------+-----------------+-------------------------------+----------+----------\n orders  |     270000 |     130000 |    100000 |             0 |     30000 |             |                 | 2026-09-17 06:30:24.656713+00 |        5 |        0\n(1 row)\n\nERROR:  function pgstattuple(unknown) does not exist\n\nLINE 1: ..., round(free_percent::numeric,1) AS free_pct FROM pgstattupl...\n                                                             ^\nHINT:  No function matches the given name and argument types. You might need to add explicit type casts.']
+  ],
   refs: [
     ['pg_stat_all_tables', 'monitoring-stats.html#MONITORING-PG-STAT-ALL-TABLES-VIEW'],
     ['定常的なバキューム作業', 'routine-vacuuming.html'],
@@ -1124,6 +1178,10 @@
   ],
   answer: [0, 1],
   exp: 'PostgreSQL 13 以降、インデックスが2つ以上あるテーブルの VACUUM では、インデックスの掃除をパラレルワーカーで分担できます。「launched 1 parallel vacuum worker for index vacuuming」がそれを示しています。\n「0 dead row versions cannot be removed yet」は、長時間のトランザクションなどのせいで回収できずに残った不要行がないことを表します。この値が大きい場合は、pg_stat_activity で古いトランザクションや idle in transaction のセッションを探します。\n通常の VACUUM は領域を再利用可能にするだけで、ファイルは基本的に縮みません。取得するのも読み書きを妨げない SHARE UPDATE EXCLUSIVE ロックです。\n最後の「vacuuming "pg_toast.pg_toast_16450"」のとおり、TOAST テーブルも既定で処理されます（PostgreSQL 14 の PROCESS_TOAST オプションで省略可能）。\nこの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['VACUUM (VERBOSE) の出力全体',
+      'INFO:  vacuuming "public.orders"\nINFO:  launched 1 parallel vacuum worker for index vacuuming (planned: 1)\nINFO:  scanned index "orders_pkey" to remove 130000 row versions\nDETAIL:  CPU: user: 0.02 s, system: 0.02 s, elapsed: 0.21 s\nINFO:  scanned index "orders_customer_id_idx" to remove 130000 row versions\nDETAIL:  CPU: user: 0.07 s, system: 0.01 s, elapsed: 0.26 s\nINFO:  table "orders": removed 130000 dead item identifiers in 2942 pages\nDETAIL:  CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.13 s\nINFO:  index "orders_pkey" now contains 270000 row versions in 1647 pages\nDETAIL:  130000 index row versions were removed.\n0 index pages were newly deleted.\n0 index pages are currently deleted, of which 0 are currently reusable.\nCPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s.\nINFO:  index "orders_customer_id_idx" now contains 270000 row versions in 1067 pages\nDETAIL:  130000 index row versions were removed.\n0 index pages were newly deleted.\n0 index pages are currently deleted, of which 0 are currently reusable.\nCPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s.\nINFO:  table "orders": found 30000 removable, 270000 nonremovable row versions in 2942 out of 2942 pages\nDETAIL:  0 dead row versions cannot be removed yet, oldest xmin: 755\nSkipped 0 pages due to buffer pins, 0 frozen pages.\nCPU: user: 0.02 s, system: 0.04 s, elapsed: 0.46 s.\nINFO:  vacuuming "pg_toast.pg_toast_16450"\nINFO:  table "pg_toast_16450": found 0 removable, 0 nonremovable row versions in 0 out of 0 pages\nDETAIL:  0 dead row versions cannot be removed yet, oldest xmin: 755\nSkipped 0 pages due to buffer pins, 0 frozen pages.\nCPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s.\nVACUUM']
+  ],
   refs: [
     ['VACUUM', 'sql-vacuum.html'],
     ['定常的なバキューム作業', 'routine-vacuuming.html']
@@ -1142,6 +1200,10 @@
   ],
   answer: 0,
   exp: 'PostgreSQL 13 以降、自動バキュームは更新・削除による不要タプルだけでなく、挿入された行数でも起動します（autovacuum_vacuum_insert_threshold / autovacuum_vacuum_insert_scale_factor）。挿入だけのテーブルでもバキュームして、可視性マップの更新や行の凍結を進めるためです。\nこのログでは「tuples: 0 removed, 100000 remain」と、回収する不要タプルはなく、すべての行が有効なまま残っています。「index scan not needed」はインデックスから消すものがなかったことを表します。\n自動 ANALYZE は、変更された行数（挿入を含む）が autovacuum_analyze_threshold と scale_factor に基づくしきい値を超えると、バキュームとは独立に実行されます。\nこのログは PostgreSQL 14 で実際に出力されたものです。',
+  evidence: [
+    ['INSERT だけを行ったテーブルに対する自動バキュームのログ',
+      '2026-09-17 06:31:03.461 UTC [9005] LOG:  automatic vacuum of table "shop.public.customers": index scans: 0\n2026-09-17 06:44:11.605 UTC [13920] LOG:  automatic vacuum of table "shop.public.hs": index scans: 0\n2026-09-17 06:44:11.777 UTC [13920] LOG:  automatic analyze of table "shop.public.hs"\n	index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed\n	avg read rate: 0.050 MB/s, avg write rate: 13.623 MB/s\n--\n2026-09-17 06:44:11.605 UTC [13920] LOG:  automatic vacuum of table "shop.public.hs": index scans: 0\n	pages: 0 removed, 443 remain, 0 skipped due to pins, 0 skipped frozen\n	tuples: 0 removed, 100000 remain, 0 are dead but not yet removable, oldest xmin: 778\n	index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed\n	avg read rate: 0.624 MB/s, avg write rate: 0.624 MB/s']
+  ],
   refs: [
     ['自動バキュームデーモン', 'routine-vacuuming.html#AUTOVACUUM'],
     ['log_autovacuum_min_duration', 'runtime-config-logging.html#GUC-LOG-AUTOVACUUM-MIN-DURATION'],
@@ -1161,6 +1223,12 @@
   ],
   answer: [0, 1],
   exp: 'recovery_target_time を指定すると、その時刻より後にコミットされたトランザクションに到達した時点でリカバリを止めます（recovery_target_inclusive の既定 on は「目標時刻ちょうどのものは含める」という意味です）。この例では 06:57:37 にコミットされたトランザクション 813（誤った DROP TABLE）の直前で止まっています。\nrecovery_target_action の既定値は pause で、「pausing at the end of recovery」のとおり一時停止します。この間は読み取り専用の接続ができるため、データを確認してから pg_wal_replay_resume() を実行すると昇格します。目標が違っていた場合は、サーバを停止して別の目標時刻でやり直せます。\n昇格すると recovery.signal は自動的に削除されます。\nこのログは PostgreSQL 14 で実際に PITR を行って採取したものです。',
+  evidence: [
+    ['PITR の準備（アーカイブを有効にしてベースバックアップを取得）',
+      'archive_mode\n--------------\n on\n(1 row)\n\n                                      archive_command\n--------------------------------------------------------------------------------------------\n test ! -f /var/lib/pgsql/14/backup/archive/%f && cp %p /var/lib/pgsql/14/backup/archive/%f\n(1 row)\n\nNOTICE:  all required WAL segments have been archived\n目標時刻: 2026-09-17 06:57:35+00\n archived_count |    last_archived_wal     | failed_count\n----------------+--------------------------+--------------\n              4 | 000000010000000000000072 |            0\n(1 row)'],
+    ['recovery_target_time を指定して起動したときのログと、一時停止した状態',
+      'LOG:  starting point-in-time recovery to 2026-09-17 06:57:35+00\nLOG:  restored log file "000000010000000000000071" from archive\nLOG:  redo starts at 0/71000028\nLOG:  consistent recovery state reached at 0/71000100\nLOG:  database system is ready to accept read-only connections\nLOG:  restored log file "000000010000000000000072" from archive\nLOG:  recovery stopping before commit of transaction 813, time 2026-09-17 06:57:37.31168+00\nLOG:  pausing at the end of recovery\nHINT:  Execute pg_wal_replay_resume() to promote.\n pg_is_in_recovery | pg_is_wal_replay_paused\n-------------------+-------------------------\n t                 | t\n(1 row)\n\n count |    last_row\n-------+----------------\n  1001 | before-mistake\n(1 row)\n\nls: cannot access \'/var/lib/pgsql/14/pitr/recovery.signal\': No such file or directory']
+  ],
   refs: [
     ['ポイントインタイムリカバリ', 'continuous-archiving.html#BACKUP-PITR-RECOVERY'],
     ['リカバリターゲット', 'runtime-config-wal.html#RUNTIME-CONFIG-WAL-RECOVERY-TARGET'],
@@ -1180,6 +1248,12 @@
   ],
   answer: 0,
   exp: 'DROP TABLE は、実行時にテーブルの AccessExclusiveLock を取得し、その情報が WAL に記録されます。PITR はコミットの直前で止まるため、この例ではロック取得の WAL までは適用され、コミットの WAL は適用されていない状態で一時停止しています。WAL を適用する startup プロセスがそのロックを保持し続けるため、products を読もうとした SELECT が待ち続けました（pg_blocking_pids() でも startup プロセスが返りました）。\nこのロックは、トランザクション 813 が確定しないまま昇格する（中止扱いになる）と解放されます。実際に pg_wal_replay_resume() で昇格すると SELECT が完了し、DROP 直前の 1001 行が残っていることを確認できました。\n一時停止中も読み取り専用の接続はでき、このロックと関係のない問い合わせ（別セッションからの pg_stat_activity の参照など）は実行できました。デッドロックではないため、自動的には解消しません。\nこの状況は PostgreSQL 14 で実際に再現したものです。',
+  evidence: [
+    ['リカバリの適用（startup プロセス）と参照が競合して、問い合わせが待たされている状態',
+      'pid  |  backend_type  | state  | wait_event_type |  wait_event   |     waiting     |                            query\n-------+----------------+--------+-----------------+---------------+-----------------+--------------------------------------------------------------\n 23566 | client backend | active | Lock            | relation      | 00:19:38.590172 | SELECT count(*), max(name) FILTER (WHERE id = 5001) AS last_\n 23552 | startup        |        | IPC             | RecoveryPause |                 |\n(2 rows)\n\n  pid  |  backend_type  | locktype | relation |        mode         | granted\n-------+----------------+----------+----------+---------------------+---------\n 23566 | client backend | relation |    24592 | AccessShareLock     | f\n 23552 | startup        | relation |    24597 | AccessExclusiveLock | t\n 23552 | startup        | relation |    24599 | AccessExclusiveLock | t\n 23552 | startup        | relation |    24595 | AccessExclusiveLock | t\n 23552 | startup        | relation |    24592 | AccessExclusiveLock | t\n 23552 | startup        | relation |    24596 | AccessExclusiveLock | t\n(6 rows)\n\n  pid  | pg_blocking_pids\n-------+------------------\n 23566 | {23552}\n(1 row)'],
+    ['そのときのリカバリのログ',
+      'LOG:  starting point-in-time recovery to 2026-09-17 06:57:35+00\nLOG:  restored log file "000000010000000000000071" from archive\nLOG:  redo starts at 0/71000028\nLOG:  consistent recovery state reached at 0/71000100\nLOG:  database system is ready to accept read-only connections\nLOG:  restored log file "000000010000000000000072" from archive\nLOG:  recovery stopping before commit of transaction 813, time 2026-09-17 06:57:37.31168+00\nLOG:  pausing at the end of recovery\nHINT:  Execute pg_wal_replay_resume() to promote.\n pg_is_in_recovery | pg_is_wal_replay_paused\n-------------------+-------------------------\n t                 | t\n(1 row)\n\n count |    last_row\n-------+----------------\n  1001 | before-mistake\n(1 row)\n\nls: cannot access \'/var/lib/pgsql/14/pitr/recovery.signal\': No such file or directory']
+  ],
   refs: [
     ['ポイントインタイムリカバリ', 'continuous-archiving.html#BACKUP-PITR-RECOVERY'],
     ['ホットスタンバイでの競合の処理', 'hot-standby.html#HOT-STANDBY-CONFLICT'],
@@ -1199,6 +1273,12 @@
   ],
   answer: [0, 1],
   exp: 'アーカイブリカバリの完了時には新しいタイムライン ID が割り当てられ、以降の WAL ファイル名の先頭がそれに変わります（00000002...）。こうすることで、元のタイムライン 1 の WAL を上書きせずに、元の歴史と分岐後の歴史を両立できます。\nタイムライン履歴ファイル 00000002.history には、親のタイムライン（1）、分岐した位置（0/72011270）、理由（06:57:37 のコミットの前で停止）が記録され、アーカイブにも保存されます。\n昇格すると recovery.signal は自動的に削除され、pg_is_in_recovery() は f（通常稼働）になります。\n元のタイムラインの WAL は、別の時点へ PITR し直す可能性がある間は残しておく必要があります。\nこの結果は PostgreSQL 14 で実際に PITR を行って採取したものです。',
+  evidence: [
+    ['pg_wal_replay_resume() で昇格させた後の状態（タイムラインの履歴ファイルを含む）',
+      'ERROR:  recovery is not in progress\nHINT:  Recovery control functions can only be executed during recovery.\nLOG:  selected new timeline ID: 2\nLOG:  archive recovery complete\nLOG:  database system is ready to accept connections\n pg_is_in_recovery\n-------------------\n f\n(1 row)\n\nls: cannot access \'/var/lib/pgsql/14/pitr/recovery.signal\': No such file or directory\n00000002.history\n1	0/72011270	before 2026-09-17 06:57:37.31168+00\n\ndone'],
+    ['そこに至るまでのリカバリのログ',
+      'LOG:  starting point-in-time recovery to 2026-09-17 06:57:35+00\nLOG:  restored log file "000000010000000000000071" from archive\nLOG:  redo starts at 0/71000028\nLOG:  consistent recovery state reached at 0/71000100\nLOG:  database system is ready to accept read-only connections\nLOG:  restored log file "000000010000000000000072" from archive\nLOG:  recovery stopping before commit of transaction 813, time 2026-09-17 06:57:37.31168+00\nLOG:  pausing at the end of recovery\nHINT:  Execute pg_wal_replay_resume() to promote.\n pg_is_in_recovery | pg_is_wal_replay_paused\n-------------------+-------------------------\n t                 | t\n(1 row)\n\n count |    last_row\n-------+----------------\n  1001 | before-mistake\n(1 row)\n\nls: cannot access \'/var/lib/pgsql/14/pitr/recovery.signal\': No such file or directory']
+  ],
   refs: [
     ['タイムライン', 'continuous-archiving.html#BACKUP-TIMELINES'],
     ['ポイントインタイムリカバリ', 'continuous-archiving.html#BACKUP-PITR-RECOVERY']
@@ -1235,6 +1315,12 @@
   ],
   answer: 0,
   exp: 'pg_isready はサーバの接続状態を調べるコマンドで、終了ステータスは次のとおりです。\n・0: 接続を受け付けている（accepting connections）\n・1: 接続を拒否している（rejecting connections）。起動処理やリカバリの途中など\n・2: 接続の試みに応答がない（no response）。サーバが動いていない、ポートが違うなど\n・3: 接続を試みなかった（パラメータが不正な場合など）\n(b) はクラッシュリカバリの最中で、このとき psql で接続しても「the database system is in recovery mode」で拒否されました。リカバリが終わると accepting connections に戻ります。\npg_isready は問い合わせを実行せず、接続の可否だけを確認します。状態を得るために正しいユーザ名やパスワードは必要ありません（ただし、誤った値を指定すると、失敗した接続の試みがサーバログに記録されます）。監視スクリプトや、起動を待ってから処理を始めるスクリプトでよく使われます。',
+  evidence: [
+    ['pg_isready をいくつかの状況で実行した結果',
+      '$ pg_isready -p 5432\n/run/postgresql:5432 - accepting connections\nexit status: 0\n$ pg_isready -h localhost -p 5432\nlocalhost:5432 - accepting connections\nexit status: 0\n$ pg_isready -p 5499\n/run/postgresql:5499 - no response\nexit status: 2\n$ pg_isready -q -p 5499\nexit status: 2\n$ pg_isready -p 5432 -d "port=abc"\n/run/postgresql:abc - no response\nexit status: 2'],
+    ['クラッシュリカバリ中は rejecting connections（終了ステータス 1）になり、復旧後に戻る',
+      '2026-09-18 13:20:53.453 UTC [4857] LOG:  database system is ready to accept connections\n2026-09-18 13:21:04.298 UTC [4857] LOG:  server process (PID 5027) was terminated by signal 11: Segmentation fault\n2026-09-18 13:21:04.298 UTC [4857] DETAIL:  Failed process was running: SELECT pg_sleep(30);\n2026-09-18 13:21:04.298 UTC [4857] LOG:  terminating any other active server processes\n2026-09-18 13:21:04.301 UTC [4857] LOG:  all server processes terminated; reinitializing\n2026-09-18 13:21:04.334 UTC [5042] LOG:  database system was interrupted; last known up at 2026-09-18 13:20:54 UTC\nterms=# SELECT count(*) FROM emp WHERE name = \'x\';\npsql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: FATAL:  the database system is in recovery mode\n$ pg_isready -p 5432\n/run/postgresql:5432 - rejecting connections\nexit status: 1\n\n2026-09-18 13:21:07.638 UTC [5042] LOG:  database system was not properly shut down; automatic recovery in progress\n2026-09-18 13:21:07.644 UTC [5042] LOG:  redo starts at 0/74006F70\n2026-09-18 13:21:07.705 UTC [5042] LOG:  redo done at 0/74A693F8 system usage: CPU: user: 0.03 s, system: 0.02 s, elapsed: 0.06 s\n2026-09-18 13:21:07.865 UTC [4857] LOG:  database system is ready to accept connections\n count\n-------\n     0\n(1 row)\n\n$ pg_isready -p 5432\n/run/postgresql:5432 - accepting connections\nexit status: 0']
+  ],
   refs: [
     ['pg_isready', 'app-pg-isready.html'],
     ['サーバの起動', 'server-start.html']
@@ -1531,6 +1617,10 @@
   ],
   answer: 0,
   exp: 'postgres_fdw は、リモートから1回のフェッチで取得する行数を fetch_size オプション（既定 100）で決めます。行数の多い参照では往復回数が性能を左右するため、この値を大きくすると改善することがあります。CREATE SERVER や ALTER SERVER、ALTER FOREIGN TABLE の OPTIONS で指定でき、テーブル側の指定がサーバ側より優先されます。\n外部テーブルの実体はリモートにあるため、ローカルの共有バッファやバキュームは効果がありません。\nなお INSERT の往復回数は batch_size オプション（PostgreSQL 14 で追加）で調整します。',
+  evidence: [
+    ['postgres_fdw の実行計画（Remote SQL）と、統計・use_remote_estimate の効果',
+      '=# EXPLAIN (VERBOSE, COSTS OFF) SELECT count(*) FROM f_orders WHERE customer_id = 5;\n                                    QUERY PLAN\n-----------------------------------------------------------------------------------\n Foreign Scan\n   Output: (count(*))\n   Relations: Aggregate on (public.f_orders)\n   Remote SQL: SELECT count(*) FROM public.remote_orders WHERE ((customer_id = 5))\n Query Identifier: 6765579859126191466\n(5 rows)\n\n=# EXPLAIN (ANALYZE, VERBOSE, TIMING OFF, SUMMARY OFF) SELECT * FROM f_orders WHERE customer_id = 5;\n                                            QUERY PLAN\n---------------------------------------------------------------------------------------------------\n Foreign Scan on public.f_orders  (cost=100.00..138.66 rows=11 width=12) (actual rows=100 loops=1)\n   Output: id, customer_id, amount\n   Remote SQL: SELECT id, customer_id, amount FROM public.remote_orders WHERE ((customer_id = 5))\n Query Identifier: -8634811883859016470\n(4 rows)\n\n（外部テーブルには統計がないため、行数の見積もりは既定値のまま）\n=# SELECT relname, reltuples FROM pg_class WHERE relname = \'f_orders\';\n relname  | reltuples\n----------+-----------\n f_orders |        -1\n(1 row)\n\n=# ANALYZE f_orders;\nANALYZE\n=# SELECT relname, reltuples FROM pg_class WHERE relname = \'f_orders\';\n relname  | reltuples\n----------+-----------\n f_orders |    100000\n(1 row)\n\n=# ALTER SERVER fdw_srv OPTIONS (ADD use_remote_estimate \'true\');\nALTER SERVER\n=# EXPLAIN (ANALYZE, VERBOSE, TIMING OFF, SUMMARY OFF) SELECT * FROM f_orders WHERE customer_id = 5;\n                                             QUERY PLAN\n-----------------------------------------------------------------------------------------------------\n Foreign Scan on public.f_orders  (cost=100.00..1893.00 rows=100 width=12) (actual rows=100 loops=1)\n   Output: id, customer_id, amount\n   Remote SQL: SELECT id, customer_id, amount FROM public.remote_orders WHERE ((customer_id = 5))\n Query Identifier: -8634811883859016470\n(4 rows)\n\n（ローカルで条件を評価する書き方だと、全行を取り寄せてしまう）\n=# EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM f_orders WHERE amount::text LIKE \'5%\';\n                               QUERY PLAN\n------------------------------------------------------------------------\n Foreign Scan on public.f_orders\n   Output: id, customer_id, amount\n   Filter: ((f_orders.amount)::text ~~ \'5%\'::text)\n   Remote SQL: SELECT id, customer_id, amount FROM public.remote_orders\n Query Identifier: 612401073934825444\n(5 rows)']
+  ],
   refs: [
     ['postgres_fdw', 'postgres-fdw.html'],
     ['CREATE SERVER', 'sql-createserver.html']
@@ -1635,6 +1725,10 @@
   ],
   answer: [0, 1],
   exp: 'データベースのファイルは $PGDATA/base/<データベースの OID>/ に置かれます。oid2name の結果から shop の OID は 16419、orders のファイル名（relfilenode）は 16450 なので、本体は base/16419/16450 です。pg_relation_filepath(\'orders\') でも base/16419/16450 と確認できました。\n_fsm は空き領域マップ、_vm は可視性マップのファイルで、本体とは別に作られます。可視性マップはバキュームで初めて作られるため、まだ VACUUM されていないテーブルにないのは正常です。実際、この後 VACUUM を実行すると 16450_vm が作られました。\nファイル名は relfilenode です。作成直後は OID と同じ値（この例ではどちらも 16450）になることが多いものの別物で、VACUUM FULL や TRUNCATE、CLUSTER でテーブルが書き直されると relfilenode だけが変わります。\n1GB ごとのセグメントは 16450.1 のような名前になります。_fsm はセグメントではありません。',
+  evidence: [
+    ['oid2name と、実ファイルの確認',
+      'All databases:\n    Oid  Database Name  Tablespace\n----------------------------------\n  13806       postgres  pg_default\n  16419           shop  pg_default\n  13805      template0  pg_default\n      1      template1  pg_default\nFrom database "shop":\n  Filenode  Table Name\n----------------------\n     16450      orders\n$ ls -l $PGDATA/base/16419 | grep 16450\n18071552 16450\n24576 16450_fsm\n pg_relation_filepath\n----------------------\n base/16419/16450\n(1 row)']
+  ],
   refs: [
     ['データベースファイルのレイアウト', 'storage-file-layout.html'],
     ['oid2name', 'oid2name.html'],
@@ -1673,6 +1767,12 @@
   ],
   answer: 1,
   exp: 'FIRST num (standby_name, ...) は優先順位に基づく同期レプリケーションで、リストの先に書かれた稼働中のスタンバイから num 台が同期スタンバイになります。この例では s1 が同期スタンバイで、s1 が接続していなければ s2 が選ばれます。\nANY num (...) はクォーラムに基づく方式で、リスト内の任意の num 台から応答があればコミットが完了します。\nsynchronous_standby_names が空の場合は同期スタンバイがなく、非同期レプリケーションになります。\nsynchronous_commit = local や off の場合、そのトランザクションはスタンバイからの応答を待ちません（remote_write、on、remote_apply で待機の度合いが変わります）。',
+  evidence: [
+    ['synchronous_standby_names を設定したときの pg_stat_replication',
+      'synchronous_standby_names\n------------------------------\n FIRST 1 (standby1, standby2)\n(1 row)\n\n application_name |   state   | sync_priority | sync_state |  sent_lsn  | flush_lsn  | replay_lsn\n------------------+-----------+---------------+------------+------------+------------+------------\n standby1         | streaming |             1 | sync       | 0/96DA9460 | 0/96DA9460 | 0/96DA9460\n(1 row)\n\n  status   | sender_host | sender_port | slot_name | flushed_lsn\n-----------+-------------+-------------+-----------+-------------\n streaming | 127.0.0.1   |        5432 | standby1  | 0/96DA9460\n(1 row)'],
+    ['同期スタンバイを停止した状態でコミットした場合',
+      'WARNING:  canceling wait for synchronous replication due to user request\nDETAIL:  The transaction has already committed locally, but might not have been replicated to the standby.\nINSERT 0 1\n  pid  | state  | wait_event_type | wait_event |                query\n-------+--------+-----------------+------------+--------------------------------------\n 13861 | active | IPC             | SyncRep    | INSERT INTO accounts VALUES (11, 0);\n(1 row)\n\n pg_reload_conf\n----------------\n t\n(1 row)\n\n--- 待たされていたクライアント ---\nINSERT 0 1']
+  ],
   refs: [
     ['synchronous_standby_names', 'runtime-config-replication.html#GUC-SYNCHRONOUS-STANDBY-NAMES'],
     ['同期レプリケーション', 'warm-standby.html#SYNCHRONOUS-REPLICATION'],
@@ -1777,6 +1877,10 @@
   ],
   answer: 0,
   exp: 'この中断は、プライマリの VACUUM が削除した行バージョンを、スタンバイで実行中の問い合わせがまだ必要としているために起きるリカバリ競合です。\nスタンバイで hot_standby_feedback = on にすると、スタンバイの最も古いトランザクションの情報がプライマリへ通知され、プライマリ側の VACUUM が必要な行を削除しなくなります。ただしプライマリでの不要タプルの回収が遅れる副作用があります。\nmax_standby_streaming_delay を大きくすると WAL の適用を待たせて問い合わせを保護できますが、0 にするとむしろ即座に中断されます。\nhot_standby はスタンバイ側で問い合わせを許可するパラメータです。',
+  evidence: [
+    ['ホットスタンバイでリカバリと問い合わせが競合したときのログとエラー',
+      'ERROR:  VACUUM cannot run inside a transaction block\n--- スタンバイ側クライアント ---\nCOMMIT\n--- スタンバイのログ ---\n datname | confl_tablespace | confl_lock | confl_snapshot | confl_bufferpin | confl_deadlock\n---------+------------------+------------+----------------+-----------------+----------------\n shop    |                0 |          0 |              0 |               0 |              0\n(1 row)']
+  ],
   refs: [
     ['ホットスタンバイでの競合の処理', 'hot-standby.html#HOT-STANDBY-CONFLICT'],
     ['hot_standby_feedback', 'runtime-config-replication.html#GUC-HOT-STANDBY-FEEDBACK'],
@@ -1846,6 +1950,10 @@
   ],
   answer: 0,
   exp: 'recovery_min_apply_delay はスタンバイでの WAL の「適用」を指定時間だけ遅らせるパラメータです。受信と保存は通常どおり行われるため、プライマリ側で WAL が滞留することはありません。\nこれにより、誤った DELETE や DROP がプライマリで行われても、指定時間内であればスタンバイには反映されていないため、そこからデータを救い出せます（遅延スタンバイ）。\nただし同期レプリケーションと併用すると、synchronous_commit = remote_apply の場合にコミットが遅延分だけ待たされる点に注意が必要です。\nホットスタンバイの問い合わせは、遅れた時点のデータを参照することになります。',
+  evidence: [
+    ['recovery_min_apply_delay = 1min を設定したときの、受信と適用の差',
+      'pg_is_in_recovery\n-------------------\n t\n(1 row)\n\n recovery_min_apply_delay\n--------------------------\n 1min\n(1 row)\n\n--- プライマリ側\n application_name |   state   |  sent_lsn  | flush_lsn  | replay_lsn |   replay_lag\n------------------+-----------+------------+------------+------------+-----------------\n standby1         | streaming | 0/96DA9460 | 0/96DA9460 | 0/88143AE0 | 00:00:16.446569\n(1 row)\n\n--- スタンバイ側（受信は済んでいるが、適用は遅らせている）\n pg_last_wal_receive_lsn | pg_last_wal_replay_lsn |      delay\n-------------------------+------------------------+-----------------\n 0/96DA9460              | 0/8BEA2980             | 00:13:29.080804\n(1 row)\n\nERROR:  relation "delaytest" does not exist\nLINE 1: SELECT count(*) FROM delaytest;\n                             ^\n count\n-------\n     1\n(1 row)']
+  ],
   refs: [
     ['recovery_min_apply_delay', 'runtime-config-replication.html#GUC-RECOVERY-MIN-APPLY-DELAY'],
     ['スタンバイサーバの設定', 'warm-standby.html#STANDBY-SERVER-OPERATION']
@@ -1933,6 +2041,12 @@
   ],
   answer: [0, 1],
   exp: 'pg_stat_replication はプライマリ（WAL を送る側）で参照し、sent_lsn（送信済み）、write_lsn（スタンバイの OS に書き込み済み）、flush_lsn（スタンバイのディスクに保存済み）、replay_lsn（スタンバイで適用済み）を比べると、どの段階で遅れているかが分かります。すべて同じなら遅れはありません。\npg_stat_wal_receiver はスタンバイ（受信する側）で参照し、接続先やスロット名を確認できます。\nsync_state の async は非同期レプリケーションであることを表し、WAL は送信されています。同期か非同期かは synchronous_standby_names の設定で決まり、LSN の一致とは関係ありません。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['プライマリとスタンバイの状態',
+      'synchronous_standby_names\n------------------------------\n FIRST 1 (standby1, standby2)\n(1 row)\n\n application_name |   state   | sync_priority | sync_state |  sent_lsn  | flush_lsn  | replay_lsn\n------------------+-----------+---------------+------------+------------+------------+------------\n standby1         | streaming |             1 | sync       | 0/96DA9460 | 0/96DA9460 | 0/96DA9460\n(1 row)\n\n  status   | sender_host | sender_port | slot_name | flushed_lsn\n-----------+-------------+-------------+-----------+-------------\n streaming | 127.0.0.1   |        5432 | standby1  | 0/96DA9460\n(1 row)\n\n--- スタンバイで書き込もうとした場合\nERROR:  cannot execute INSERT in a read-only transaction\nERROR:  cannot execute CREATE TABLE in a read-only transaction\n count\n-------\n     1\n(1 row)'],
+    ['適用を一時停止して遅延させた場合',
+      'pg_wal_replay_pause\n---------------------\n\n(1 row)\n\n application_name |   state   |  sent_lsn  | write_lsn  | flush_lsn  | replay_lsn | replay_behind |   replay_lag   | sync_state\n------------------+-----------+------------+------------+------------+------------+---------------+----------------+------------\n standby1         | streaming | 0/19B628C0 | 0/19B628C0 | 0/19B628C0 | 0/16569C78 | 54 MB         | 00:00:02.00898 | async\n(1 row)\n\n pg_last_wal_receive_lsn | pg_last_wal_replay_lsn | pg_is_wal_replay_paused |  replay_delay\n-------------------------+------------------------+-------------------------+-----------------\n 0/19B628C0              | 0/16569C78             | t                       | 00:00:11.755934\n(1 row)\n\n pg_wal_replay_resume\n----------------------\n\n(1 row)']
+  ],
   refs: [
     ['pg_stat_replication', 'monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW'],
     ['pg_stat_wal_receiver', 'monitoring-stats.html#MONITORING-PG-STAT-WAL-RECEIVER-VIEW']
@@ -1951,6 +2065,10 @@
   ],
   answer: 0,
   exp: 'pg_is_in_recovery() が t のサーバはリカバリ中（スタンバイ）です。ホットスタンバイでは読み取りの問い合わせだけを実行でき、INSERT や UPDATE、DDL は「read-only transaction」としてエラーになります。一時テーブルもカタログへの書き込みを伴うため作成できません。\nこれは WAL を適用しているスタンバイの性質であり、パラメータや権限の変更では書き込めるようになりません。書き込みが必要な処理はプライマリで行います（スタンバイを昇格させると書き込めるようになります）。\nこれらのエラーは PostgreSQL 14 で実際に出力されたものです。',
+  evidence: [
+    ['スタンバイで書き込もうとした場合のエラー',
+      '--- スタンバイで書き込もうとした場合\nERROR:  cannot execute INSERT in a read-only transaction\nERROR:  cannot execute CREATE TABLE in a read-only transaction\n count\n-------\n     1\n(1 row)']
+  ],
   refs: [
     ['ホットスタンバイでのユーザ用概説', 'hot-standby.html#HOT-STANDBY-USERS'],
     ['リカバリ情報関数', 'functions-admin.html#FUNCTIONS-RECOVERY-INFO-TABLE']

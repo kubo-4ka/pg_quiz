@@ -363,6 +363,10 @@
   answer: 1,
   shuffle: false,
   exp: '第2正規形は、第1正規形を満たし、かつ主キー（候補キー）以外の属性がキー全体に完全関数従属している（キーの一部だけに従属する部分関数従属がない）状態です。\nこの表では、主キーは (受注番号, 商品番号) ですが、商品名は主キーの一部である商品番号だけで決まるため、部分関数従属があります。したがって第2正規形を満たしていません。\n商品（商品番号, 商品名）の表を分離すると、受注明細（受注番号, 商品番号, 数量）は第2正規形を満たします。',
+  evidence: [
+    ['第2正規形になっていない表と、分割した場合の違い（実際に試した結果）',
+      '=# CREATE TABLE order_items (order_no int, item_no int, item_name text, qty int, PRIMARY KEY (order_no, item_no));\nCREATE TABLE\n=# INSERT INTO order_items VALUES (1, 100, \'ペン\', 2), (1, 200, \'ノート\', 1), (2, 100, \'ペン\', 5);\nINSERT 0 3\n=# SELECT * FROM order_items ORDER BY order_no, item_no;\n order_no | item_no | item_name | qty\n----------+---------+-----------+-----\n        1 |     100 | ペン      |   2\n        1 |     200 | ノート    |   1\n        2 |     100 | ペン      |   5\n(3 rows)\n\n（商品名を変えるには、その商品を含むすべての行を更新する必要がある＝更新時異常）\n=# UPDATE order_items SET item_name = \'油性ペン\' WHERE item_no = 100 AND order_no = 1;\nUPDATE 1\n=# SELECT DISTINCT item_no, item_name FROM order_items ORDER BY item_no;\n item_no | item_name\n---------+-----------\n     100 | ペン\n     100 | 油性ペン\n     200 | ノート\n(3 rows)\n\n（第2正規形に分割すると、商品名は1か所で管理できる）\n=# CREATE TABLE items (item_no int PRIMARY KEY, item_name text); INSERT INTO items VALUES (100, \'ペン\'), (200, \'ノート\');\nINSERT 0 2\n=# CREATE TABLE order_lines (order_no int, item_no int REFERENCES items, qty int, PRIMARY KEY (order_no, item_no)); INSERT INTO order_lines VALUES (1, 100, 2), (1, 200, 1), (2, 100, 5);\nINSERT 0 3\n=# UPDATE items SET item_name = \'油性ペン\' WHERE item_no = 100;\nUPDATE 1\n=# SELECT l.order_no, l.item_no, i.item_name, l.qty FROM order_lines l JOIN items i USING (item_no) ORDER BY 1, 2;\n order_no | item_no | item_name | qty\n----------+---------+-----------+-----\n        1 |     100 | 油性ペン  |   2\n        1 |     200 | ノート    |   1\n        2 |     100 | 油性ペン  |   5\n(3 rows)']
+  ],
   refs: [
     ['OSS-DB Silver 出題範囲（S1.2）', 'https://oss-db.jp/outline/silver'],
     ['外部キー', 'ddl-constraints.html#DDL-CONSTRAINTS-FK']
@@ -398,6 +402,10 @@
   ],
   answer: 0,
   exp: 'SQL の論理値は真（true）、偽（false）、不明（NULL / unknown）の3値論理です。col が NULL の行では col = 1 が NULL になり、NOT NULL も NULL のままです。WHERE 句は条件が真の行だけを返すため、NULL の行は結果に含まれません。\nしたがって、NOT (col = 1) が真になる 2 の行だけが返されます。NULL の行も含めたい場合は、WHERE col IS DISTINCT FROM 1 や WHERE col <> 1 OR col IS NULL と書きます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'SELECT col FROM t WHERE NOT (col = 1);\n col\n-----\n   2\n(1 row)\n\nSELECT col, (col = 1) AS eq1, NOT (col = 1) AS not_eq1 FROM t;\n col | eq1 | not_eq1\n-----+-----+---------\n   1 | t   | f\n   2 | f   | t\n     |     |\n(3 rows)\n\nSELECT col FROM t WHERE col IS DISTINCT FROM 1;\n col\n-----\n   2\n\n(2 rows)']
+  ],
   refs: [
     ['論理演算子', 'functions-logical.html'],
     ['比較関数および演算子', 'functions-comparison.html']
@@ -433,6 +441,10 @@
   ],
   answer: 0,
   exp: 'この表では、主キーの社員番号が部署番号を決め、その部署番号が部署名を決めています。このようにキー以外の属性を介してキーに従属する関係を推移的関数従属と呼び、第3正規形ではこれを排除します。\n部署番号 → 部署名 の関係を部署テーブルとして分離し、社員テーブルには外部キーとして部署番号を残すと、部署名の重複や更新時の不整合（更新時異状）を防げます。\n他の選択肢では推移的関数従属が残るか、社員と部署名などの対応関係が失われます。',
+  evidence: [
+    ['第3正規形への分割を実際に試した結果',
+      '=# CREATE TABLE emp_all (emp_no int PRIMARY KEY, name text, dept_no int, dept_name text);\nCREATE TABLE\n=# INSERT INTO emp_all VALUES (1,\'Sato\',10,\'営業\'), (2,\'Suzuki\',10,\'営業\'), (3,\'Tanaka\',20,\'開発\');\nINSERT 0 3\n=# SELECT * FROM emp_all ORDER BY emp_no;\n emp_no |  name  | dept_no | dept_name\n--------+--------+---------+-----------\n      1 | Sato   |      10 | 営業\n      2 | Suzuki |      10 | 営業\n      3 | Tanaka |      20 | 開発\n(3 rows)\n\n（部署名は部署番号で決まる＝推移的関数従属。分割すると部署名は1行で管理できる）\n=# CREATE TABLE dept (dept_no int PRIMARY KEY, dept_name text); INSERT INTO dept VALUES (10,\'営業\'), (20,\'開発\');\nINSERT 0 2\n=# CREATE TABLE emp3 (emp_no int PRIMARY KEY, name text, dept_no int REFERENCES dept); INSERT INTO emp3 VALUES (1,\'Sato\',10), (2,\'Suzuki\',10), (3,\'Tanaka\',20);\nINSERT 0 3\n=# UPDATE dept SET dept_name = \'第1営業部\' WHERE dept_no = 10;\nUPDATE 1\n=# SELECT e.emp_no, e.name, d.dept_no, d.dept_name FROM emp3 e JOIN dept d USING (dept_no) ORDER BY 1;\n emp_no |  name  | dept_no | dept_name\n--------+--------+---------+-----------\n      1 | Sato   |      10 | 第1営業部\n      2 | Suzuki |      10 | 第1営業部\n      3 | Tanaka |      20 | 開発\n(3 rows)']
+  ],
   refs: [
     ['OSS-DB Silver 出題範囲（S1.2）', 'https://oss-db.jp/outline/silver'],
     ['外部キー', 'ddl-constraints.html#DDL-CONSTRAINTS-FK']
@@ -450,6 +462,10 @@
   ],
   answer: 3,
   exp: 'SQL の集合演算は、関係代数の和・積・差に相当します。\n・UNION: 和集合（重複を除去）→ 1, 2, 3, 4\n・UNION ALL: 重複を除去しない和 → 1, 2, 3, 2, 3, 4\n・INTERSECT: 積集合（両方にある行）→ 2, 3\n・EXCEPT: 差集合（左にあって右にない行）→ 1\n集合演算を行う2つの問い合わせは、列の数と対応する列のデータ型が一致している必要があります。CROSS JOIN は集合演算ではなく、行の組み合わせ（直積）を返す結合です。',
+  evidence: [
+    ['集合演算と外部結合の結果',
+      '=# SELECT id FROM a EXCEPT SELECT id FROM b;\n id\n----\n  1\n(1 row)\n\n=# SELECT id FROM a INTERSECT SELECT id FROM b;\n id\n----\n  3\n  2\n(2 rows)\n\n=# SELECT id FROM a UNION SELECT id FROM b ORDER BY id;\n id\n----\n  1\n  2\n  3\n  4\n(4 rows)\n\n=# SELECT * FROM a FULL OUTER JOIN b ON a.id = b.id ORDER BY a.id, b.id;\n id | id\n----+----\n  1 |\n  2 |  2\n  3 |  3\n    |  4\n(4 rows)']
+  ],
   refs: [
     ['問い合わせの組み合わせ（UNION、INTERSECT、EXCEPT）', 'queries-union.html']
   ]

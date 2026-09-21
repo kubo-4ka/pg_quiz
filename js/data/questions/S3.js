@@ -70,6 +70,10 @@
   answer: 2,
   shuffle: false,
   exp: 'LEFT OUTER JOIN は、結合条件に一致する行の組み合わせに加え、左側のテーブル（emp）で一致する行がなかった行も、右側の列を NULL にして出力します。\n・A: dept_id = 10 が一致 → A / Sales\n・B: dept_id = 20 に一致する部署がない → B / NULL\n・C: dept_id が NULL のため比較結果が真にならない → C / NULL\nしたがって結果は3行です。INNER JOIN なら A の1行、FULL OUTER JOIN なら右側だけにある Dev を加えた4行になります。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE dept (id integer PRIMARY KEY, dname text);\nCREATE TABLE\nCREATE TABLE emp (id integer, name text, dept_id integer);\nCREATE TABLE\nINSERT INTO dept VALUES (10, \'Sales\'), (30, \'Dev\');\nINSERT 0 2\nINSERT INTO emp VALUES (1, \'A\', 10), (2, \'B\', 20), (3, \'C\', NULL);\nINSERT 0 3\nSELECT e.name, d.dname\n  FROM emp e LEFT OUTER JOIN dept d ON e.dept_id = d.id;\n name | dname\n------+-------\n A    | Sales\n B    |\n C    |\n(3 rows)']
+  ],
   refs: [
     ['結合テーブル', 'queries-table-expressions.html#QUERIES-JOIN'],
     ['外部結合（チュートリアル）', 'tutorial-join.html']
@@ -89,6 +93,10 @@
   answer: 2,
   shuffle: false,
   exp: 'OFFSET n は結果の先頭から n 行を読み飛ばし、LIMIT m は最大 m 行を返します。ORDER BY id で並べた 1〜10 から先頭の2行（1, 2）を読み飛ばし、続く3行（3, 4, 5）が返されます。\nORDER BY を指定しないと行の順序は保証されないため、LIMIT / OFFSET を使う場合は一意な順序になるように ORDER BY を指定するのが重要です。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'SELECT id FROM t ORDER BY id LIMIT 3 OFFSET 2;\n id\n----\n  3\n  4\n  5\n(3 rows)']
+  ],
   refs: [
     ['LIMITとOFFSET', 'queries-limit.html']
   ]
@@ -106,6 +114,10 @@
   ],
   answer: 0,
   exp: 'GROUP BY region によって region ごとにグループ化され、sum(amount) は east = 300、west = 80、north = 300 になります。HAVING 句はグループ化した後の結果に対する条件で、sum(amount) >= 100 を満たす east と north だけが残ります。ORDER BY region により east、north の順に並びます。\nWHERE 句はグループ化の前に各行に適用されるため集約関数を使えませんが、HAVING 句では集約関数を使えます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE sales (region text, amount integer);\nCREATE TABLE\nINSERT INTO sales VALUES\n  (\'east\', 100), (\'east\', 200), (\'west\', 50), (\'west\', 30), (\'north\', 300);\nINSERT 0 5\nSELECT region, sum(amount) FROM sales\n GROUP BY region\nHAVING sum(amount) >= 100\n ORDER BY region;\n region | sum\n--------+-----\n east   | 300\n north  | 300\n(2 rows)']
+  ],
   refs: [
     ['GROUP BYとHAVING句', 'queries-table-expressions.html#QUERIES-GROUP'],
     ['集約関数（チュートリアル）', 'tutorial-agg.html']
@@ -280,6 +292,10 @@
   ],
   answer: 0,
   exp: 'INSERT ... ON CONFLICT は、一意制約や排他制約に違反する行があった場合の動作を指定する構文（いわゆる UPSERT）です。DO UPDATE を指定すると、競合した既存の行を更新します。EXCLUDED は挿入しようとして競合した行を表します。\nこの例では apple が主キーと競合するため、既存の qty 10 に EXCLUDED.qty の 5 を加えて 15 に更新され、競合しない banana は通常どおり挿入されます。\nDO NOTHING を指定すると、競合した行は何もせずに読み飛ばされます。ON CONFLICT は PostgreSQL 9.5 で導入されました。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE stock (item text PRIMARY KEY, qty integer);\nCREATE TABLE\nINSERT INTO stock VALUES (\'apple\', 10);\nINSERT 0 1\nINSERT INTO stock VALUES (\'apple\', 5), (\'banana\', 3)\n  ON CONFLICT (item) DO UPDATE SET qty = stock.qty + EXCLUDED.qty;\nINSERT 0 2\nSELECT item, qty FROM stock ORDER BY item;\n  item  | qty\n--------+-----\n apple  |  15\n banana |   3\n(2 rows)']
+  ],
   refs: [
     ['INSERT（ON CONFLICT 句）', 'sql-insert.html#SQL-ON-CONFLICT']
   ]
@@ -314,6 +330,10 @@
   ],
   answer: 2,
   exp: 'x NOT IN (サブクエリ) は、サブクエリのすべての値について x <> 値 が真の場合に真になります。サブクエリの結果に NULL が含まれると、例えば 1 について 1 <> 2 は真ですが 1 <> NULL は NULL になるため、全体も NULL となり、WHERE 句を満たしません。2 は 2 <> 2 が偽なので除外されます。そのため、行は1つも返されません。\nNULL を含みうる列で「存在しない行」を求める場合は、WHERE NOT EXISTS (SELECT 1 FROM t2 WHERE t2.id = t1.id) を使うと、1 と 3 が返されます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t1 (id integer);\nCREATE TABLE\nCREATE TABLE t2 (id integer);\nCREATE TABLE\nINSERT INTO t1 VALUES (1), (2), (3);\nINSERT 0 3\nINSERT INTO t2 VALUES (2), (NULL);\nINSERT 0 2\nSELECT id FROM t1 WHERE id NOT IN (SELECT id FROM t2);\n id\n----\n(0 rows)']
+  ],
   refs: [
     ['サブクエリ式（NOT IN）', 'functions-subquery.html#FUNCTIONS-SUBQUERY-NOTIN'],
     ['サブクエリ式（EXISTS）', 'functions-subquery.html#FUNCTIONS-SUBQUERY-EXISTS']
@@ -351,6 +371,10 @@
   answer: 2,
   shuffle: false,
   exp: 'rank() はウィンドウ関数の一つで、ORDER BY の順序における順位を返します。同じ値の行には同じ順位が付き、その次の順位は同順位の行数だけ飛ばされます。\nscore の降順では A と C が 90 で同率1位、B（80）は3番目の行なので rank は 3、D（70）は 4 になります。\n同順位の次の順位を飛ばさない dense_rank() では B は 2 に、同順位を区別せず連番を振る row_number() では 3 になります。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE scores (name text, score integer);\nCREATE TABLE\nINSERT INTO scores VALUES (\'A\', 90), (\'B\', 80), (\'C\', 90), (\'D\', 70);\nINSERT 0 4\nSELECT name, rank() OVER (ORDER BY score DESC) AS rank FROM scores;\n name | rank\n------+------\n A    |    1\n C    |    1\n B    |    3\n D    |    4\n(4 rows)']
+  ],
   refs: [
     ['ウィンドウ関数', 'functions-window.html'],
     ['ウィンドウ関数（チュートリアル）', 'tutorial-window.html']
@@ -369,6 +393,10 @@
   ],
   answer: 0,
   exp: 'DISTINCT ON (式) は PostgreSQL 独自の構文で、指定した式の値が同じ行のグループごとに、最初の1行だけを返します。どの行が「最初」になるかは ORDER BY で決まり、ORDER BY の先頭は DISTINCT ON の式と一致させる必要があります。\nこの例では dept ごとに salary の降順で並べた最初の行、つまり部署ごとに給与が最も高い従業員の行が返されます。\n通常の DISTINCT は、選択したすべての列の組み合わせが重複する行を取り除きます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'SELECT DISTINCT ON (dept) dept, name, salary\n  FROM emp\n ORDER BY dept, salary DESC;\n dept | name | salary\n------+------+--------\n dev  | Sato |    500\n ops  | Ito  |    420\n(2 rows)\n\nSELECT * FROM emp ORDER BY dept, salary DESC;\n dept |  name  | salary\n------+--------+--------\n dev  | Sato   |    500\n dev  | Suzuki |    450\n ops  | Ito    |    420\n ops  | Tanaka |    400\n(4 rows)']
+  ],
   refs: [
     ['SELECT（DISTINCT 句）', 'sql-select.html#SQL-DISTINCT'],
     ['DISTINCT', 'queries-select-lists.html#QUERIES-DISTINCT']
@@ -386,6 +414,10 @@
   ],
   answer: 1,
   exp: '検査制約（CHECK）は、式の評価結果が真または NULL の場合に満たされたものとみなされます。price が NULL の場合、price > 0 は NULL になるため制約違反にはならず、行は正常に挿入されます。\nNULL を許可したくない場合は、NOT NULL 制約を併せて指定します（price integer NOT NULL CHECK (price > 0)）。\nこの NULL の扱いは、一意制約（NULL 同士は重複とみなされない）とあわせて押さえておきたいポイントです。',
+  evidence: [
+    ['CHECK 制約に対する INSERT の結果',
+      '=# CREATE TABLE products (id integer, price integer CHECK (price > 0));\nCREATE TABLE\n=# INSERT INTO products VALUES (1, 100);\nINSERT 0 1\n=# INSERT INTO products VALUES (2, 0);\nERROR:  new row for relation "products" violates check constraint "products_price_check"\nDETAIL:  Failing row contains (2, 0).\n=# INSERT INTO products VALUES (3, NULL);\nINSERT 0 1\n=# SELECT * FROM products ORDER BY id;\n id | price\n----+-------\n  1 |   100\n  3 |\n(2 rows)']
+  ],
   refs: [
     ['検査制約', 'ddl-constraints.html#DDL-CONSTRAINTS-CHECK-CONSTRAINTS'],
     ['制約（非NULL制約）', 'ddl-constraints.html']
@@ -473,6 +505,10 @@
   answer: 1,
   shuffle: false,
   exp: 'integer 同士の演算結果は integer になり、整数の除算（/）では小数点以下が切り捨てられます。99 * 110 = 10890、10890 / 100 = 108（108.9 の小数部を切り捨て）となり、戻り値は 108 です。\n四捨五入したい場合は、round(price * 1.1) のように numeric 型で計算してから丸めます（1.1 は numeric 型の定数です）。\nPL/pgSQL の関数は、DECLARE（任意）、BEGIN、END で囲んだブロックで本体を記述し、$$ で囲んだ文字列として定義します。',
+  evidence: [
+    ['関数の実行結果と、整数どうしの計算',
+      '=# SELECT add_tax(99), add_tax(100), add_tax(1);\n add_tax | add_tax | add_tax\n---------+---------+---------\n     108 |     110 |       1\n(1 row)\n\n=# SELECT 99 * 110 AS step1, 99 * 110 / 100 AS step2, (99 * 110.0 / 100) AS numeric_result;\n step1 | step2 |    numeric_result\n-------+-------+----------------------\n 10890 |   108 | 108.9000000000000000\n(1 row)']
+  ],
   refs: [
     ['PL/pgSQLの構造', 'plpgsql-structure.html'],
     ['数学関数と演算子', 'functions-math.html']
@@ -577,6 +613,10 @@
   answer: 4,
   shuffle: false,
   exp: 'CROSS JOIN（交差結合）は、2つのテーブルのすべての行の組み合わせ（直積）を返します。結果の行数は t1 の行数 × t2 の行数なので、3 × 2 = 6 行です。\nFROM t1, t2 のようにカンマで区切って指定し、結合条件を書かなかった場合も同じ結果になります。大きなテーブル同士で結合条件を書き忘れると、膨大な行数の結果になるので注意が必要です。',
+  evidence: [
+    ['CROSS JOIN の結果',
+      '=# SELECT * FROM t1 CROSS JOIN t2;\n v | n\n---+---\n x | 1\n y | 1\n z | 1\n x | 2\n y | 2\n z | 2\n(6 rows)\n\n=# SELECT count(*) FROM t1 CROSS JOIN t2;\n count\n-------\n     6\n(1 row)']
+  ],
   refs: [
     ['結合テーブル', 'queries-table-expressions.html#QUERIES-JOIN']
   ]
@@ -594,6 +634,10 @@
   answer: 2,
   shuffle: false,
   exp: 'FULL OUTER JOIN は、結合条件に一致した行の組み合わせに加えて、左右それぞれのテーブルで一致する行がなかった行も、相手側の列を NULL にして返します。\n・一致する行: (2, 2)、(3, 3)\n・a にだけある行: (1, NULL)\n・b にだけある行: (NULL, 4)\nしたがって結果は4行です。INNER JOIN なら2行、LEFT OUTER JOIN なら3行（1、2、3）、CROSS JOIN なら9行になります。',
+  evidence: [
+    ['FULL OUTER JOIN と集合演算の結果',
+      '=# SELECT id FROM a EXCEPT SELECT id FROM b;\n id\n----\n  1\n(1 row)\n\n=# SELECT id FROM a INTERSECT SELECT id FROM b;\n id\n----\n  3\n  2\n(2 rows)\n\n=# SELECT id FROM a UNION SELECT id FROM b ORDER BY id;\n id\n----\n  1\n  2\n  3\n  4\n(4 rows)\n\n=# SELECT * FROM a FULL OUTER JOIN b ON a.id = b.id ORDER BY a.id, b.id;\n id | id\n----+----\n  1 |\n  2 |  2\n  3 |  3\n    |  4\n(4 rows)']
+  ],
   refs: [
     ['結合テーブル', 'queries-table-expressions.html#QUERIES-JOIN']
   ]
@@ -646,6 +690,10 @@
   answer: 2,
   shuffle: false,
   exp: 'DISTINCT による重複除去では、NULL 同士は同じ値（重複）として扱われます。そのため SELECT DISTINCT v の結果は 1、2、NULL の3行になり、それを count(*) で数えると 3 になります。GROUP BY v でも同様に、NULL は1つのグループにまとめられます。\n一方、count(DISTINCT v) は NULL を数えないため 2 になります。「比較では NULL = NULL は真にならないが、DISTINCT や GROUP BY では NULL 同士を同一とみなす」という違いを押さえておきましょう。',
+  evidence: [
+    ['DISTINCT と NULL、count の違い',
+      '=# SELECT DISTINCT v FROM tn;\n v\n---\n\n 2\n 1\n(3 rows)\n\n=# SELECT count(*) FROM (SELECT DISTINCT v FROM tn) AS s;\n count\n-------\n     3\n(1 row)\n\n=# SELECT count(v) AS count_v, count(*) AS count_all, count(DISTINCT v) AS count_distinct_v FROM tn;\n count_v | count_all | count_distinct_v\n---------+-----------+------------------\n       2 |         4 |                2\n(1 row)']
+  ],
   refs: [
     ['DISTINCT', 'queries-select-lists.html#QUERIES-DISTINCT'],
     ['集約関数', 'functions-aggregate.html']
@@ -664,6 +712,10 @@
   ],
   answer: 0,
   exp: 'CASE 式は、WHEN の条件を上から順に評価し、最初に真になった条件の THEN の値を返します。どの条件も真にならなければ ELSE の値（ELSE を省略した場合は NULL）を返します。\n・85: score >= 80 が真 → A\n・60: score >= 80 は偽、score >= 60 が真 → B\n・59: どちらも偽 → C\nしたがって結果は A, B, C です。境界値（60 は 60 以上に含まれる）の扱いに注意します。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'SELECT CASE WHEN score >= 80 THEN \'A\'\n            WHEN score >= 60 THEN \'B\'\n            ELSE \'C\' END AS rank\n  FROM t ORDER BY score DESC;\n rank\n------\n A\n B\n C\n(3 rows)']
+  ],
   refs: [
     ['CASE', 'functions-conditional.html#FUNCTIONS-CASE']
   ]
@@ -698,6 +750,10 @@
   ],
   answer: 2,
   exp: 'この問い合わせのサブクエリは、外側の問い合わせの行（e.dept）を参照する相関サブクエリです。外側の emp の各行について、その行の部署（e.dept）に属する社員の平均給与をサブクエリで求め、その値より給与が高い行だけを返します。\nサブクエリは集約関数 avg で1行1列の値を返すスカラサブクエリなので、比較演算子で比較できます。部署ごとに平均が異なるため、「全社の平均」ではなく「自分の部署の平均」との比較になります。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'SELECT name\n  FROM emp e\n WHERE salary > (SELECT avg(salary) FROM emp WHERE dept = e.dept);\n name\n------\n Sato\n Ito\n(2 rows)\n\nSELECT dept, avg(salary) FROM emp GROUP BY dept ORDER BY dept;\n dept |         avg\n------+----------------------\n dev  | 400.0000000000000000\n ops  | 410.0000000000000000\n(2 rows)']
+  ],
   refs: [
     ['スカラ副問い合わせ', 'sql-expressions.html#SQL-SYNTAX-SCALAR-SUBQUERIES'],
     ['副問い合わせ式', 'functions-subquery.html']
@@ -716,6 +772,10 @@
   ],
   answer: 3,
   exp: 'PostgreSQL の UPDATE では、FROM 句に他のテーブルを指定して結合し、その条件に一致する行だけを更新できます（SQL 標準にはない PostgreSQL の拡張構文です）。更新されるのは UPDATE の直後に指定した orders テーブルだけで、FROM 句の customers は条件の判定や SET の値の参照に使われます。\n同じ処理はサブクエリを使って WHERE customer_id IN (SELECT id FROM customers WHERE rank = \'gold\') と書くこともできます。DELETE でも USING 句で他のテーブルを結合できます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'UPDATE orders o\n   SET status = \'vip\'\n  FROM customers c\n WHERE o.customer_id = c.id\n   AND c.rank = \'gold\';\nUPDATE 2\nSELECT * FROM orders ORDER BY id;\n id | customer_id | status\n----+-------------+--------\n 11 |           1 | vip\n 12 |           2 | normal\n 13 |           1 | vip\n(3 rows)']
+  ],
   refs: [
     ['UPDATE', 'sql-update.html'],
     ['DELETE（USING 句）', 'sql-delete.html']
@@ -833,6 +893,10 @@
   ],
   answer: 0,
   exp: 'WHERE 句はグループ化の前に個々の行を絞り込みます。v >= 2 により (a,2)、(b,3)、(b,4)、(c,5) の4行が残ります。\n次に g でグループ化すると、a は合計 2、b は合計 7、c は合計 5 になります。\nHAVING 句はグループ化した後の結果に対する条件なので、sum(v) >= 7 を満たす b の 7 だけが残ります。\nこのように、集約前の条件は WHERE に、集約結果に対する条件は HAVING に書きます。HAVING は GROUP BY の後に記述します。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (g text, v integer);\nCREATE TABLE\nINSERT INTO t VALUES (\'a\', 1), (\'a\', 2), (\'b\', 3), (\'b\', 4), (\'c\', 5);\nINSERT 0 5\nSELECT g, sum(v) FROM t WHERE v >= 2 GROUP BY g HAVING sum(v) >= 7;\n g | sum\n---+-----\n b |   7\n(1 row)']
+  ],
   refs: [
     ['GROUP BY句とHAVING句', 'queries-table-expressions.html#QUERIES-GROUP'],
     ['集約関数', 'functions-aggregate.html']
@@ -868,6 +932,10 @@
   ],
   answer: 0,
   exp: 'INSERT ... ON CONFLICT は、一意制約や排他制約に違反したときの動作を指定する構文です（UPSERT）。\nDO UPDATE SET を指定すると、衝突した既存行を更新します。EXCLUDED は「挿入しようとした行」を参照する特別な名前なので、EXCLUDED.name は \'banana\' です。結果として既存行の name が \'banana\' に更新されます。\nDO NOTHING を指定した場合は、衝突した行について何もせず、エラーにもなりません。\n衝突の判定対象は、列名や制約名で明示するか、DO NOTHING では省略できます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (id integer PRIMARY KEY, name text);\nCREATE TABLE\nINSERT INTO t VALUES (1, \'apple\');\nINSERT 0 1\nINSERT INTO t VALUES (1, \'banana\')\n  ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;\nINSERT 0 1\nSELECT * FROM t ORDER BY id;\n id |  name\n----+--------\n  1 | banana\n(1 row)']
+  ],
   refs: [
     ['INSERT の ON CONFLICT 句', 'sql-insert.html#SQL-ON-CONFLICT'],
     ['INSERT', 'sql-insert.html']
@@ -903,6 +971,10 @@
   ],
   answer: 0,
   exp: 'PostgreSQL では ORDER BY における NULL の既定の位置が、昇順（ASC）のときは最後、降順（DESC）のときは最初と決められています。NULL はどの値よりも大きいものとして扱われる、と考えると分かりやすいでしょう。\nしたがってこの問い合わせは 1、3、NULL の順に返します。\n明示したい場合は `ORDER BY v NULLS FIRST` や `ORDER BY v DESC NULLS LAST` のように NULLS FIRST / NULLS LAST を指定します。\nORDER BY で NULL の行が除外されることはありません。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (v integer);\nCREATE TABLE\nINSERT INTO t VALUES (3), (NULL), (1);\nINSERT 0 3\nSELECT v FROM t ORDER BY v;\n v\n---\n 1\n 3\n\n(3 rows)']
+  ],
   refs: [
     ['行の並べ替え', 'queries-order.html'],
     ['SELECT', 'sql-select.html']
@@ -1040,6 +1112,10 @@
   ],
   answer: 0,
   exp: 'NOT IN は「いずれの値とも等しくない」という条件ですが、比較対象に NULL があると結果が真になりません。1 と 2 を比べると、1 = 2 は偽、1 = NULL は不明（NULL）となり、全体は「偽」ではなく「不明」になるため、条件を満たさず行は返りません。\nこのため、副問い合わせに NULL が含まれる可能性がある場合、NOT IN は意図しない結果になります。NOT EXISTS を使うか、副問い合わせ側で IS NOT NULL を付けるのが安全です。\nNOT EXISTS では、対応する行がなければ真になるため、この例では 1 が返ります。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE a (id integer);\nCREATE TABLE\nCREATE TABLE b (id integer);\nCREATE TABLE\nINSERT INTO a VALUES (1), (2);\nINSERT 0 2\nINSERT INTO b VALUES (2), (NULL);\nINSERT 0 2\nSELECT id FROM a WHERE id NOT IN (SELECT id FROM b);\n id\n----\n(0 rows)']
+  ],
   refs: [
     ['副問い合わせ式', 'functions-subquery.html'],
     ['比較関数と演算子', 'functions-comparison.html']
@@ -1092,6 +1168,10 @@
   ],
   answer: 0,
   exp: 'ANY（SOME）と ALL は、値と集合または配列の各要素を比較する演算子です。`v > ALL (ARRAY[2, 4])` は「v がすべての要素より大きい」、つまり v > 2 かつ v > 4 という意味になります。\n該当するのは 5 と 9 の2行なので、count(*) は 2 です。\n`v > ANY (...)` であれば「いずれかの要素より大きい」となり、v > 2 または v > 4、つまり 5 と 9 に加えて条件を満たす行が対象になります。\nIN は `= ANY (...)` と同じ意味で、NOT IN は `<> ALL (...)` と同じ意味です。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (v integer);\nCREATE TABLE\nINSERT INTO t VALUES (1), (5), (9);\nINSERT 0 3\nSELECT count(*) FROM t WHERE v > ALL (ARRAY[2, 4]);\n count\n-------\n     2\n(1 row)']
+  ],
   refs: [
     ['副問い合わせ式', 'functions-subquery.html'],
     ['行と配列の比較', 'functions-comparisons.html']
@@ -1144,6 +1224,10 @@
   ],
   answer: 0,
   exp: 'WITH RECURSIVE は再帰的な共通テーブル式で、非再帰項（初期値）と再帰項を UNION または UNION ALL でつないで書きます。\nこの例では初期値 1 から始まり、n < 4 の間 n + 1 を繰り返すため、1、2、3、4 の4行が生成されます。n = 4 では条件を満たさず再帰が止まります。合計は 1 + 2 + 3 + 4 = 10 です。\n再帰項に終了条件がないと無限に行が生成されるため、WHERE 句や LIMIT で必ず停止するように書きます。\n組織図や部品構成のような階層データの展開によく使われます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'WITH RECURSIVE nums(n) AS (\n  SELECT 1\n  UNION ALL\n  SELECT n + 1 FROM nums WHERE n < 4\n)\nSELECT sum(n) FROM nums;\n sum\n-----\n  10\n(1 row)']
+  ],
   refs: [
     ['再帰問い合わせ', 'queries-with.html#QUERIES-WITH-RECURSIVE'],
     ['WITH問い合わせ', 'queries-with.html']
@@ -1163,6 +1247,10 @@
   answer: 3,
   shuffle: false,
   exp: 'ROLLUP (region, item) は、(region, item)、(region)、() という3段階のグループ化をまとめて行います。\n(region, item) の組み合わせが3行、region ごとの小計が east と west の2行、全体の合計が1行で、合計 6行になります。小計・合計の行では、集約されていない列が NULL になります。\nGROUPING SETS を使えば任意の組み合わせを指定でき、CUBE はすべての組み合わせ（この例では4通り、計 3+2+2+1 = 8行）を生成します。\nNULL が「元データの NULL」か「小計行」かは GROUPING() 関数で区別できます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE sales (region text, item text, amt integer);\nCREATE TABLE\nINSERT INTO sales VALUES\n  (\'east\', \'a\', 10), (\'east\', \'b\', 20), (\'west\', \'a\', 30);\nINSERT 0 3\nSELECT region, item, sum(amt) FROM sales GROUP BY ROLLUP (region, item);\n region | item | sum\n--------+------+-----\n        |      |  60\n east   | b    |  20\n west   | a    |  30\n east   | a    |  10\n west   |      |  30\n east   |      |  30\n(6 rows)']
+  ],
   refs: [
     ['GROUPING SETS、CUBE、ROLLUP', 'queries-table-expressions.html#QUERIES-GROUPING-SETS'],
     ['集約関数', 'functions-aggregate.html']
@@ -1355,6 +1443,10 @@
   ],
   answer: 0,
   exp: 'bytea は任意のバイト列（バイナリデータ）を格納するデータ型です。文字列とは異なり、文字コードの変換や解釈は行われません。\n出力形式は bytea_output で決まり、既定の hex では \\x に続けて1バイトを2桁の16進数で表示します。\'abc\' は 0x61 0x62 0x63 なので \\x616263 です。escape にすると、表示できる文字はそのまま、それ以外は \\000 のような8進数で表示されます。変わるのは表示の形式だけで、格納されている値は同じです。\nbytea に対する length と octet_length はバイト数を返します。UTF-8 の「あ」は3バイトなので 3 です。\nbytea は可変長で、1つの値に最大 1GB まで格納できます。',
+  evidence: [
+    ['bytea の表示形式と長さ（hex と escape）',
+      'terms=# SELECT \'abc\'::bytea AS a, length(\'abc\'::bytea) AS len, octet_length(\'あ\'::bytea) AS o, E\'\\\\x414243\'::bytea AS b;\n    a     | len | o |    b\n----------+-----+---+----------\n \\x616263 |   3 | 3 | \\x414243\n(1 row)\n\nterms=# SHOW bytea_output;\n bytea_output\n--------------\n hex\n(1 row)\n\nterms=# SET bytea_output = \'escape\'; SELECT \'abc\'::bytea, \'\\x00ff\'::bytea;\n bytea |  bytea\n-------+----------\n abc   | \\000\\377\n(1 row)']
+  ],
   refs: [
     ['バイナリ列データ型', 'datatype-binary.html'],
     ['bytea_output', 'runtime-config-client.html#GUC-BYTEA-OUTPUT'],
@@ -1374,6 +1466,10 @@
   ],
   answer: 2,
   exp: 'シーケンスの nextval は、トランザクションをロールバックしても取り消されません。複数のセッションが同時に番号を取得しても待たずに済むようにするためで、そのため採番した値には欠番が生じ得ます。したがって、ロールバックしたトランザクションで 120 が消費され、(1) は 130 になります。\nsetval の第3引数 is_called を false にすると、「まだ値を使っていない」状態で 500 に設定され、次の nextval は 500 を返します。第3引数を省略する（true）と、500 が使用済みとみなされ、次の nextval は 510（500 + INCREMENT 10）になります。\n実機でも、(1) は 130、(2) は 500 でした。また、MAXVALUE に達すると「nextval: reached maximum value of sequence」エラーになり、currval はそのセッションでまだ nextval を呼んでいないとエラーになります。',
+  evidence: [
+    ['シーケンスの採番を順に実行した結果（MAXVALUE や currval のエラーも）',
+      'terms=# CREATE SEQUENCE order_no START 100 INCREMENT 10;\nCREATE SEQUENCE\nterms=# SELECT nextval(\'order_no\'), nextval(\'order_no\');\n nextval | nextval\n---------+---------\n     100 |     110\n(1 row)\n\nterms=# SELECT currval(\'order_no\');\nERROR:  currval of sequence "order_no" is not yet defined in this session\nterms=# BEGIN; SELECT nextval(\'order_no\'); ROLLBACK;\nROLLBACK\nterms=# SELECT nextval(\'order_no\');\n nextval\n---------\n     130\n(1 row)\n\nterms=# SELECT setval(\'order_no\', 500);\n setval\n--------\n    500\n(1 row)\n\nterms=# SELECT nextval(\'order_no\');\n nextval\n---------\n     510\n(1 row)\n\nterms=# SELECT setval(\'order_no\', 500, false);\n setval\n--------\n    500\n(1 row)\n\nterms=# SELECT nextval(\'order_no\');\n nextval\n---------\n     500\n(1 row)\n\nterms=# ALTER SEQUENCE order_no MAXVALUE 520;\nALTER SEQUENCE\nterms=# SELECT nextval(\'order_no\'), nextval(\'order_no\'), nextval(\'order_no\');\nERROR:  nextval: reached maximum value of sequence "order_no" (520)\n(新しいセッション)\nterms=# SELECT currval(\'order_no\');\nERROR:  currval of sequence "order_no" is not yet defined in this session\nterms=# DROP SEQUENCE order_no;\nDROP SEQUENCE']
+  ],
   refs: [
     ['シーケンス操作関数', 'functions-sequence.html'],
     ['CREATE SEQUENCE', 'sql-createsequence.html'],
@@ -1393,6 +1489,10 @@
   ],
   answer: 0,
   exp: 'CREATE TABLE ... PARTITION BY でパーティション化テーブル（親）を作り、CREATE TABLE ... PARTITION OF ... FOR VALUES で各パーティションを作ります。範囲パーティションの FROM は含み、TO は含まないため、2024-01-01 の行は sales_2024 だけに格納されています（tableoid で格納先を確認できます）。\n親テーブル自体はデータを持たないため、どのパーティションにも当てはまらない行はエラーになります。CREATE TABLE sales_def PARTITION OF sales DEFAULT; で DEFAULT パーティションを作っておくと、そうした行はそこに格納されます（実機でも 2025-01-01 の行が sales_def に格納されました）。\n既存のパーティションと範囲が重なるパーティションは作成できず、「would overlap partition」エラーになります。パーティション化は作成時に PARTITION BY で指定し、既存の通常のテーブルを後から ALTER TABLE でパーティション化することはできません（既存のテーブルは ATTACH PARTITION でパーティションとして追加できます）。',
+  evidence: [
+    ['パーティションの作成・INSERT・DEFAULT パーティション・重なりのエラー',
+      'terms=# CREATE TABLE sales (id int, sold_on date, amount int) PARTITION BY RANGE (sold_on);\nCREATE TABLE\nterms=# CREATE TABLE sales_2023 PARTITION OF sales FOR VALUES FROM (\'2023-01-01\') TO (\'2024-01-01\');\nCREATE TABLE\nterms=# CREATE TABLE sales_2024 PARTITION OF sales FOR VALUES FROM (\'2024-01-01\') TO (\'2025-01-01\');\nCREATE TABLE\nterms=# INSERT INTO sales VALUES (1, \'2023-12-31\', 100), (2, \'2024-01-01\', 200);\nINSERT 0 2\nterms=# INSERT INTO sales VALUES (3, \'2025-01-01\', 300);\nERROR:  no partition of relation "sales" found for row\nDETAIL:  Partition key of the failing row contains (sold_on) = (2025-01-01).\nterms=# SELECT tableoid::regclass, * FROM sales ORDER BY id;\n  tableoid  | id |  sold_on   | amount\n------------+----+------------+--------\n sales_2023 |  1 | 2023-12-31 |    100\n sales_2024 |  2 | 2024-01-01 |    200\n(2 rows)\n\nterms=# CREATE TABLE sales_2022 PARTITION OF sales FOR VALUES FROM (\'2022-06-01\') TO (\'2023-06-01\');\nERROR:  partition "sales_2022" would overlap partition "sales_2023"\nLINE 1: ...ITION OF sales FOR VALUES FROM (\'2022-06-01\') TO (\'2023-06-0...\n                                                             ^\nterms=# CREATE TABLE sales_def PARTITION OF sales DEFAULT;\nCREATE TABLE\nterms=# INSERT INTO sales VALUES (3, \'2025-01-01\', 300);\nINSERT 0 1\nterms=# SELECT tableoid::regclass, * FROM sales ORDER BY id;\n  tableoid  | id |  sold_on   | amount\n------------+----+------------+--------\n sales_2023 |  1 | 2023-12-31 |    100\n sales_2024 |  2 | 2024-01-01 |    200\n sales_def  |  3 | 2025-01-01 |    300\n(3 rows)\n\nterms=# CREATE TABLE sales_2025 PARTITION OF sales FOR VALUES FROM (\'2025-01-01\') TO (\'2026-01-01\');\nERROR:  updated partition constraint for default partition "sales_def" would be violated by some row\nterms=# CREATE TABLE lst (code text, v int) PARTITION BY LIST (code);\nCREATE TABLE\nterms=# CREATE TABLE lst_a PARTITION OF lst FOR VALUES IN (\'A\', \'B\');\nCREATE TABLE\nterms=# CREATE TABLE hsh (id int) PARTITION BY HASH (id);\nCREATE TABLE\nterms=# CREATE TABLE hsh_0 PARTITION OF hsh FOR VALUES WITH (MODULUS 2, REMAINDER 0);\nCREATE TABLE\nterms=# INSERT INTO hsh VALUES (1), (2), (3), (4);\nERROR:  no partition of relation "hsh" found for row\nDETAIL:  Partition key of the failing row contains (id) = (3).']
+  ],
   refs: [
     ['テーブルのパーティショニング', 'ddl-partitioning.html'],
     ['CREATE TABLE', 'sql-createtable.html'],
@@ -1414,6 +1514,10 @@
   ],
   answer: 0,
   exp: 'count(*) は NULL を含むすべての行数（3）を数えます。count(v) や sum(v)、avg(v) などの集約関数は NULL の入力を無視するため、count(v)=2、sum(v)=10+30=40、avg(v)=40/2=20 となります（avg の結果は numeric 型で 20.0000000000000000 と表示されます）。\nなお、入力行が0行、またはすべて NULL の場合、count 以外の集約関数は NULL を返します。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (id integer, v integer);\nCREATE TABLE\nINSERT INTO t VALUES (1, 10), (2, NULL), (3, 30);\nINSERT 0 3\nSELECT count(*), count(v), sum(v), avg(v) FROM t;\n count | count | sum |         avg\n-------+-------+-----+---------------------\n     3 |     2 |  40 | 20.0000000000000000\n(1 row)']
+  ],
   refs: [
     ['集約関数', 'functions-aggregate.html'],
     ['集約式', 'sql-expressions.html#SYNTAX-AGGREGATES']
@@ -1620,6 +1724,10 @@
   ],
   answer: 0,
   exp: 'count(*) は行数そのものを数えるので 3 です。count(列) は NULL でない値だけを数えるため 2 になります。\nsum() や avg() などの集約関数は NULL を無視して計算します。したがって sum(v) は 10 + 20 = 30、avg(v) は NULL を除いた2件の平均で 15 です。\nこのように、NULL を含む列で平均を求めるときは「NULL を 0 とみなした平均」にはならない点に注意が必要です。0 として扱いたい場合は avg(coalesce(v, 0)) のようにします。\nなお、行が1行もない場合、count() は 0 を返しますが sum() と avg() は NULL を返します。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (v integer);\nCREATE TABLE\nINSERT INTO t VALUES (10), (NULL), (20);\nINSERT 0 3\nSELECT count(*), count(v), sum(v), avg(v) FROM t;\n count | count | sum |         avg\n-------+-------+-----+---------------------\n     3 |     2 |  30 | 15.0000000000000000\n(1 row)']
+  ],
   refs: [
     ['集約関数', 'functions-aggregate.html'],
     ['集約関数', 'tutorial-agg.html']
@@ -1736,6 +1844,10 @@
   ],
   answer: [0, 1],
   exp: 'max や min などの集約関数は、NULL の行を無視して計算します。salary が NULL でない 500、400、300 の中で、max は 500、min は 300 です。count(*) は行数の 5 を、count(salary) は NULL でない値の数の 3 を返します。\n対象の行が1行もない場合、count 以外の集約関数は 0 ではなく NULL を返します。\n集約関数は WHERE 句では使えず、「aggregate functions are not allowed in WHERE」エラーになります。最高給の行を得るには、WHERE salary = (SELECT max(salary) FROM emp) のように副問い合わせを使います。\nmax と min は、文字列や日付など大小を比較できる型にも使えます。実機では max(name) が suzuki、min(name) が Kato でした（並び順は照合順序によります）。',
+  evidence: [
+    ['集約関数の結果と、WHERE 句で集約関数を使った場合',
+      'terms=# CREATE TABLE emp (name text, dept text, salary int); INSERT INTO emp VALUES (\'Sato\',\'dev\',500), (\'suzuki\',\'dev\',NULL), (\'Tanaka\',\'ops\',400), (\'ito\',\'ops\',NULL), (\'Kato\',NULL,300);\nINSERT 0 5\nterms=# SELECT max(salary), min(salary), count(*), count(salary), max(name), min(name) FROM emp;\n max | min | count | count |  max   | min\n-----+-----+-------+-------+--------+------\n 500 | 300 |     5 |     3 | suzuki | Kato\n(1 row)\n\nterms=# SELECT dept, max(salary), min(salary) FROM emp GROUP BY dept ORDER BY dept;\n dept | max | min\n------+-----+-----\n dev  | 500 | 500\n ops  | 400 | 400\n      | 300 | 300\n(3 rows)\n\nterms=# SELECT max(lower(name)), min(upper(name)) FROM emp;\n  max   | min\n--------+-----\n tanaka | ITO\n(1 row)\n\nterms=# SELECT lower(\'ÄBC Postgres\'), upper(\'abc_ßx\'), lower(NULL) IS NULL AS n;\n    lower     | upper  | n\n--------------+--------+---\n äbc postgres | ABC_ßX | t\n(1 row)\n\nterms=# SELECT name FROM emp WHERE salary = max(salary);\nERROR:  aggregate functions are not allowed in WHERE\nLINE 1: SELECT name FROM emp WHERE salary = max(salary);\n                                            ^\nterms=# SELECT max(salary) FROM emp WHERE dept = \'none\';\n max\n-----\n\n(1 row)']
+  ],
   refs: [
     ['集約関数', 'functions-aggregate.html'],
     ['集約関数（チュートリアル）', 'tutorial-agg.html']
@@ -1753,6 +1865,10 @@
   ],
   answer: 0,
   exp: 'lower は文字列を小文字に、upper は大文字に変換します。列の値を lower で小文字にそろえてから、小文字の \'sato\' と比較すれば、Sato、SATO、sato のすべてが一致します。\nname = lower(\'Sato\') は定数の側だけを小文字にしているため、sato の行しか一致しません。lower(name) = \'Sato\' や upper(name) = \'sato\' は、変換後の値と比較する値の大文字・小文字が合っていないため、どの行とも一致しません。\nLIKE は大文字と小文字を区別するため、sato の行しか一致しません。大文字と小文字を区別しないパターン照合には ILIKE を使います。\nなお、lower(name) で検索することが多い場合は、lower(name) に対する式インデックスを作成すると、インデックスを利用できます。',
+  evidence: [
+    ['lower / upper の動作',
+      'terms=# CREATE TABLE emp (name text, dept text, salary int); INSERT INTO emp VALUES (\'Sato\',\'dev\',500), (\'suzuki\',\'dev\',NULL), (\'Tanaka\',\'ops\',400), (\'ito\',\'ops\',NULL), (\'Kato\',NULL,300);\nINSERT 0 5\nterms=# SELECT max(salary), min(salary), count(*), count(salary), max(name), min(name) FROM emp;\n max | min | count | count |  max   | min\n-----+-----+-------+-------+--------+------\n 500 | 300 |     5 |     3 | suzuki | Kato\n(1 row)\n\nterms=# SELECT dept, max(salary), min(salary) FROM emp GROUP BY dept ORDER BY dept;\n dept | max | min\n------+-----+-----\n dev  | 500 | 500\n ops  | 400 | 400\n      | 300 | 300\n(3 rows)\n\nterms=# SELECT max(lower(name)), min(upper(name)) FROM emp;\n  max   | min\n--------+-----\n tanaka | ITO\n(1 row)\n\nterms=# SELECT lower(\'ÄBC Postgres\'), upper(\'abc_ßx\'), lower(NULL) IS NULL AS n;\n    lower     | upper  | n\n--------------+--------+---\n äbc postgres | ABC_ßX | t\n(1 row)\n\nterms=# SELECT name FROM emp WHERE salary = max(salary);\nERROR:  aggregate functions are not allowed in WHERE\nLINE 1: SELECT name FROM emp WHERE salary = max(salary);\n                                            ^\nterms=# SELECT max(salary) FROM emp WHERE dept = \'none\';\n max\n-----\n\n(1 row)']
+  ],
   refs: [
     ['文字列関数と演算子', 'functions-string.html'],
     ['LIKE / ILIKE', 'functions-matching.html#FUNCTIONS-LIKE'],
@@ -1771,6 +1887,10 @@
   ],
   answer: 0,
   exp: 'current_time は time with time zone 型、localtime は time without time zone 型、current_date は date 型、current_timestamp は timestamp with time zone 型の値を返します（実機で pg_typeof により確認できます）。TimeZone が Asia/Tokyo なら、current_time は 22:20:55+09 のように時差付きで表示されます。\nこれらは SQL 標準の特別な構文で、括弧を付けずに書きます。current_time() と書くと構文エラーになります。精度を指定する current_time(0) のような書き方は可能です。\ncurrent_time や current_timestamp は現在のトランザクションの開始時刻を返すため、同じトランザクション内では何度呼んでも同じ値です。実行時点の時刻が必要な場合は clock_timestamp() を使います。',
+  evidence: [
+    ['current_time などが返す型と値',
+      'terms=# SHOW TimeZone;\n TimeZone\n----------\n UTC\n(1 row)\n\nterms=# SELECT pg_typeof(current_time) AS t1, pg_typeof(localtime) AS t2, pg_typeof(current_date) AS t3, pg_typeof(current_timestamp) AS t4;\n         t1          |           t2           |  t3  |            t4\n---------------------+------------------------+------+--------------------------\n time with time zone | time without time zone | date | timestamp with time zone\n(1 row)\n\nterms=# SET TimeZone = \'Asia/Tokyo\'; SELECT current_time(0), localtime(0), current_date;\n current_time | localtime | current_date\n--------------+-----------+--------------\n 22:20:55+09  | 22:20:55  | 2026-09-18\n(1 row)\n\nterms=# BEGIN; SELECT current_time(3) AS a, clock_timestamp()::time(3) AS c; SELECT pg_sleep(1.5); SELECT current_time(3) AS a, clock_timestamp()::time(3) AS c; COMMIT;\nCOMMIT\nterms=# SELECT current_time();\nERROR:  syntax error at or near ")"\nLINE 1: SELECT current_time();\n                            ^']
+  ],
   refs: [
     ['現在の日付・時刻', 'functions-datetime.html#FUNCTIONS-DATETIME-CURRENT'],
     ['日付/時刻データ型', 'datatype-datetime.html']
@@ -1809,6 +1929,10 @@
   answer: 2,
   shuffle: false,
   exp: 'SAVEPOINT はトランザクション内に目印を設定し、ROLLBACK TO SAVEPOINT でその時点以降の変更だけを取り消します。トランザクション自体は継続します。\nこの例では、SAVEPOINT sp1 以降に挿入した 2 が取り消され、その後に挿入した 3 と、sp1 より前に挿入した 1 が COMMIT で確定します。したがって格納されている値は 1 と 3 です。\nなお、ROLLBACK TO SAVEPOINT を実行してもセーブポイント sp1 自体は残ります（RELEASE SAVEPOINT で破棄できます）。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'BEGIN;\nBEGIN\nINSERT INTO t VALUES (1);\nINSERT 0 1\nSAVEPOINT sp1;\nSAVEPOINT\nINSERT INTO t VALUES (2);\nINSERT 0 1\nROLLBACK TO SAVEPOINT sp1;\nROLLBACK\nINSERT INTO t VALUES (3);\nINSERT 0 1\nCOMMIT;\nCOMMIT\nSELECT * FROM t ORDER BY id;\n id\n----\n  1\n  3\n(2 rows)']
+  ],
   refs: [
     ['SAVEPOINT', 'sql-savepoint.html'],
     ['ROLLBACK TO SAVEPOINT', 'sql-rollback-to.html'],
@@ -1880,6 +2004,12 @@
   answer: 1,
   shuffle: false,
   exp: 'READ COMMITTED（PostgreSQL の既定）では、各 SQL 文はその文の開始時点までにコミットされたデータを参照します。セッション B の UPDATE は A の2回目の SELECT より前にコミットされているため、A の2回目の SELECT は 200 を返します。同じトランザクション内で読むたびに値が変わるこの現象を、反復不能読み取り（ノンリピータブルリード）と呼びます。\nA が REPEATABLE READ や SERIALIZABLE の場合は、トランザクション内の最初の文の時点のスナップショットを使い続けるため、2回目も 100 が返されます。\n読み取りは書き込みをブロックしないため、どちらのセッションも待たされません。',
+  evidence: [
+    ['READ COMMITTED のセッションで実行した結果（\\! の行は別セッションでの更新）',
+      'BEGIN;\nBEGIN\nSHOW transaction_isolation;\n transaction_isolation\n-----------------------\n read committed\n(1 row)\n\nSELECT balance FROM acct WHERE id = 1;\n balance\n---------\n     100\n(1 row)\n\nUPDATE acct SET balance = 200 WHERE id = 1;\nUPDATE 1\nSELECT balance FROM acct WHERE id = 1;\n balance\n---------\n     200\n(1 row)\n\nCOMMIT;\nCOMMIT'],
+    ['同じ操作を REPEATABLE READ で行った場合',
+      'BEGIN ISOLATION LEVEL REPEATABLE READ;\nBEGIN\nSELECT balance FROM acct WHERE id = 1;\n balance\n---------\n     100\n(1 row)\n\nSELECT balance FROM acct WHERE id = 1;\n balance\n---------\n     100\n(1 row)\n\nCOMMIT;\nCOMMIT\nSELECT balance FROM acct WHERE id = 1;\n balance\n---------\n     300\n(1 row)']
+  ],
   refs: [
     ['Read Committed分離レベル', 'transaction-iso.html#XACT-READ-COMMITTED'],
     ['トランザクションの分離', 'transaction-iso.html']
@@ -1897,6 +2027,10 @@
   ],
   answer: 2,
   exp: 'PostgreSQL では、トランザクションブロック内で文がエラーになると、そのトランザクションは中断（アボート）状態になり、以降のコマンドは「current transaction is aborted, commands ignored until end of transaction block」というエラーで拒否されます。ROLLBACK でトランザクションを終了する必要があります（COMMIT を実行してもロールバックされます）。\nエラーが起こりうる文の前に SAVEPOINT を設定しておけば、ROLLBACK TO SAVEPOINT でその時点まで戻り、トランザクションを続行できます。psql の ON_ERROR_ROLLBACK 変数を使うと、この処理を自動化できます。',
+  evidence: [
+    ['エラーの後に文を実行した場合と、ROLLBACK した場合',
+      'CREATE TABLE tx (id int);\nCREATE TABLE\nBEGIN;\nBEGIN\nINSERT INTO tx VALUES (1);\nINSERT 0 1\nINSERT INTO tx VALUES (\'abc\');\nERROR:  invalid input syntax for type integer: "abc"\nLINE 1: INSERT INTO tx VALUES (\'abc\');\n                               ^\nINSERT INTO tx VALUES (2);\nERROR:  current transaction is aborted, commands ignored until end of transaction block\nSELECT count(*) FROM tx;\nERROR:  current transaction is aborted, commands ignored until end of transaction block\nCOMMIT;\nROLLBACK\nSELECT count(*) FROM tx;\n count\n-------\n     0\n(1 row)\n\n（ROLLBACK すれば、そのトランザクションを終了して次の文を実行できる）\nBEGIN;\nBEGIN\nINSERT INTO tx VALUES (1);\nINSERT 0 1\nINSERT INTO tx VALUES (\'abc\');\nERROR:  invalid input syntax for type integer: "abc"\nLINE 1: INSERT INTO tx VALUES (\'abc\');\n                               ^\nROLLBACK;\nROLLBACK\nINSERT INTO tx VALUES (3);\nINSERT 0 1\nSELECT * FROM tx;\n id\n----\n  3\n(1 row)']
+  ],
   refs: [
     ['トランザクション（チュートリアル）', 'tutorial-transactions.html'],
     ['SAVEPOINT', 'sql-savepoint.html']
@@ -1949,6 +2083,10 @@
   ],
   answer: 0,
   exp: 'SAVEPOINT はトランザクションの途中に保存点を作るコマンドです。ROLLBACK TO SAVEPOINT でその保存点まで戻すと、それ以降の変更だけが取り消され、トランザクション自体は継続します。\nこの例では、保存点 sp1 の後に挿入した 2 が取り消され、その後の 3 は有効なまま COMMIT されます。結果として 1 と 3 が格納されます。\n保存点は RELEASE SAVEPOINT で解放できます。\nまた、トランザクション内で文がエラーになった場合も、直前の保存点まで戻せば処理を続けられます。',
+  evidence: [
+    ['psql で実行した結果（PostgreSQL 14）',
+      'CREATE TABLE t (id integer);\nCREATE TABLE\nBEGIN;\nBEGIN\nINSERT INTO t VALUES (1);\nINSERT 0 1\nSAVEPOINT sp1;\nSAVEPOINT\nINSERT INTO t VALUES (2);\nINSERT 0 1\nROLLBACK TO sp1;\nROLLBACK\nINSERT INTO t VALUES (3);\nINSERT 0 1\nCOMMIT;\nCOMMIT\nSELECT * FROM t ORDER BY id;\n id\n----\n  1\n  3\n(2 rows)']
+  ],
   refs: [
     ['SAVEPOINT', 'sql-savepoint.html'],
     ['ROLLBACK TO SAVEPOINT', 'sql-rollback-to.html']

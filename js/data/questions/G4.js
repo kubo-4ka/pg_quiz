@@ -120,6 +120,10 @@
   ],
   answer: 3,
   exp: '「Address already in use」は、サーバが指定されたアドレスとポートで待ち受けを開始しようとしたが、既に別のプロセスがそのポートを使用していることを示します。同じポート（既定 5432）で PostgreSQL の別のインスタンスが起動していないかを確認し、必要に応じて port パラメータを変更します。\n共有メモリの確保に失敗した場合は「could not create shared memory segment」などのメッセージになります。起動時の代表的なエラーとその原因は、ドキュメントの「サーバ起動時の失敗」で説明されています。',
+  evidence: [
+    ['ポートが使われている状態で起動した場合',
+      '2026-09-17 06:45:14.046 UTC [6059] LOG:  database system is shut down\n2026-09-17 06:45:15.719 UTC [15497] LOG:  database system is shut down\n2026-09-17 06:45:21.704 UTC [15518] LOG:  database system is shut down\n2026-09-17 06:45:32.135 UTC [15567] LOG:  database system is shut down\n2026-09-17 06:45:13.925 UTC [15491] FATAL:  lock file "postmaster.pid" already exists\n2026-09-17 06:45:13.925 UTC [15491] HINT:  Is another postmaster (PID 6059) running in data directory "/var/lib/pgsql/14/primary"?']
+  ],
   refs: [
     ['サーバ起動時の失敗', 'server-start.html#SERVER-START-FAILURES'],
     ['port', 'runtime-config-connection.html#GUC-PORT']
@@ -137,6 +141,10 @@
   ],
   answer: 2,
   exp: '共有メモリの確保に失敗するエラーは、要求した共有メモリの大きさ（主に shared_buffers や max_connections などから決まる）が、カーネルの共有メモリの上限や、利用可能なメモリ量を超えている場合に発生します。huge_pages = on でヒュージページが確保できない場合も起動に失敗します。\n対処として、カーネルパラメータ（Linux の vm.nr_hugepages、System V 共有メモリの上限など）を見直すか、shared_buffers などの設定値を減らします。\nドキュメントの「サーバ起動時の失敗」と「共有メモリとセマフォ」で、原因と設定方法が説明されています。',
+  evidence: [
+    ['shared_buffers を大きくしすぎて起動できない場合',
+      '$ pg_ctl restart・・hared_buffers = 100GB・・2026-09-21 04:32:20.085 UTC [42467] FATAL:  could not map anonymous shared memory: Cannot allocate memory\n2026-09-21 04:32:20.085 UTC [42467] HINT:  This error usually means that PostgreSQL\'s request for a shared memory segment exceeded available memory, swap space, or huge pages. To reduce the request size (currently 109611130880 bytes), reduce PostgreSQL\'s shared memory usage, perhaps by reducing shared_buffers or max_connections.\n2026-09-21 04:32:20.085 UTC [42467] LOG:  database system is shut down\n--- OS 蛛ｴ縺ｮ險ｭ螳・               total        used        free      shared  buff/cache   available\nMem:            1944         416         251          23        1457        1527\nvm.overcommit_memory = 0\nkernel.shmmax = 18446744073692774399\n shared_buffers\n----------------\n 128MB\n(1 row)']
+  ],
   refs: [
     ['サーバ起動時の失敗', 'server-start.html#SERVER-START-FAILURES'],
     ['共有メモリとセマフォ', 'kernel-resources.html#SYSVIPC']
@@ -205,6 +213,10 @@
   ],
   answer: 0,
   exp: 'idle in transaction のセッションは古いスナップショットを保持し続けるため、VACUUM がそれ以降の不要タプルを回収できず、テーブルの肥大化や XID 周回のリスクにつながります。idle_in_transaction_session_timeout を設定すると、トランザクションを開いたまま指定時間を超えて待機しているセッションが切断されます。\nstatement_timeout は実行中の文が対象で、文を実行していない待機状態には効きません。\n自動バキュームの頻度を上げても、古いスナップショットが残っている限り回収はできません。\nVACUUM FULL も同じ制約を受け、さらに排他ロックを取るため常用には向きません。',
+  evidence: [
+    ['トランザクションを開いたままのセッションがあるときの VACUUM',
+      '=# SELECT pid, state, now() - xact_start AS xact_age, backend_xmin, left(query, 32) AS query FROM pg_stat_activity WHERE datname = \'shop\' AND xact_start IS NOT NULL ORDER BY xact_start;\n  pid  | state  |    xact_age     | backend_xmin |              query\n-------+--------+-----------------+--------------+----------------------------------\n 52711 | active | 00:00:02.114769 |         1436 | BEGIN; SELECT count(*) FROM vt;\n 52718 | active | 00:00:00        |         1437 | SELECT pid, state, now() - xact_\n(2 rows)\n\n=# VACUUM (VERBOSE) vt;   ・亥商縺・ヨ繝ｩ繝ｳ繧ｶ繧ｯ繧ｷ繝ｧ繝ｳ縺梧ｮ九▲縺ｦ縺・ｋ髢難ｼ・INFO:  vacuuming "public.vt"\nDETAIL:  10000 dead row versions cannot be removed yet, oldest xmin: 1436\nINFO:  vacuuming "pg_toast.pg_toast_42113"\nDETAIL:  0 dead row versions cannot be removed yet, oldest xmin: 1436\n=# SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = \'vt\';\n relname | n_live_tup | n_dead_tup\n---------+------------+------------\n vt      |      10000 |      10000\n(1 row)\n\n=# VACUUM (VERBOSE) vt;   ・医ヨ繝ｩ繝ｳ繧ｶ繧ｯ繧ｷ繝ｧ繝ｳ縺檎ｵゅｏ縺｣縺溘≠縺ｨ・・INFO:  vacuuming "public.vt"\nDETAIL:  0 dead row versions cannot be removed yet, oldest xmin: 1437\nINFO:  vacuuming "pg_toast.pg_toast_42113"\nDETAIL:  0 dead row versions cannot be removed yet, oldest xmin: 1437\n=# SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = \'vt\';\n relname | n_live_tup | n_dead_tup\n---------+------------+------------\n vt      |      10000 |      10000\n(1 row)']
+  ],
   refs: [
     ['文の動作（タイムアウト）', 'runtime-config-client.html#GUC-IDLE-IN-TRANSACTION-SESSION-TIMEOUT'],
     ['定常的なバキューム作業', 'routine-vacuuming.html']
@@ -239,6 +251,10 @@
   ],
   answer: 0,
   exp: 'このエラーは共有メモリ上のロックテーブルが枯渇したときに出ます。ロックテーブルの大きさは max_locks_per_transaction × (max_connections + max_prepared_transactions) の分だけ確保され、全体で共有されます。したがって max_locks_per_transaction は「1トランザクションあたりの厳密な上限」ではなく、平均値として枠を決めるパラメータです。\nこのパラメータは起動時にしか変更できないため、変更にはサーバの再起動が必要です。\nパーティションが多いテーブルへの問い合わせは、各パーティションとそのインデックスにロックを取るため、ロック数が一気に増えます。',
+  evidence: [
+    ['パーティションが多い問い合わせと max_locks_per_transaction',
+      '=# SELECT count(*) AS partitions FROM pg_inherits WHERE inhparent = \'parts\'::regclass;\n partitions\n------------\n        200\n(1 row)\n\n=# SELECT current_setting(\'max_locks_per_transaction\') AS per_tx, current_setting(\'max_connections\') AS max_conn, current_setting(\'max_locks_per_transaction\')::int * (current_setting(\'max_connections\')::int + current_setting(\'max_prepared_transactions\')::int) AS lock_slots;\n per_tx | max_conn | lock_slots\n--------+----------+------------\n 64     | 100      |       6400\n(1 row)\n\n--- max_locks_per_transaction = 10縲［ax_connections = 10 縺ｫ縺励※蜀崎ｵｷ蜍包ｼ医Ο繝・け繧ｹ繝ｭ繝・ヨ縺ｯ 100・・=# SELECT current_setting(\'max_locks_per_transaction\')::int * (current_setting(\'max_connections\')::int + current_setting(\'max_prepared_transactions\')::int) AS lock_slots;\n lock_slots\n------------\n        100\n(1 row)\n\n=# SELECT count(*) FROM parts;   ・・00蛟九・繝代・繝・ぅ繧ｷ繝ｧ繝ｳ縺吶∋縺ｦ縺ｫ繝ｭ繝・け縺悟ｿ・ｦ・ｼ・ERROR:  out of shared memory\nHINT:  You might need to increase max_locks_per_transaction.\nCONTEXT:  parallel worker\n=# SELECT count(*) FROM parts;   ・郁ｨｭ螳壹ｒ謌ｻ縺励◆縺ゅ→・・ count\n-------\n     0\n(1 row)']
+  ],
   refs: [
     ['max_locks_per_transaction', 'runtime-config-locks.html#GUC-MAX-LOCKS-PER-TRANSACTION'],
     ['ロック管理', 'runtime-config-locks.html']
@@ -308,6 +324,12 @@
   ],
   answer: [0, 1],
   exp: 'ファイルを拡張できない旨のメッセージは、ディスクの空き容量不足を示します。\n「sorry, too many clients already」は接続数が上限に達したことを表します。\n「canceling statement due to statement timeout」は statement_timeout による中止で、デッドロックの場合は「deadlock detected」というメッセージになります。\n「database is not accepting commands to avoid wraparound data loss」はトランザクションID の周回が迫り、書き込みが拒否されている状態です。VACUUM が必要で、ディスクの故障とは関係ありません。\n「terminating connection due to administrator command」は pg_terminate_backend() などによる切断です。',
+  evidence: [
+    ['クラッシュリカバリと起動失敗のログ',
+      'waiting for server to shut down.... done\nserver stopped\nDatabase cluster state:               in production\n2026-09-17 06:45:14.229 UTC [15499] LOG:  database system was interrupted; last known up at 2026-09-17 06:45:13 UTC\n2026-09-17 06:45:15.450 UTC [15499] LOG:  database system was not properly shut down; automatic recovery in progress\n2026-09-17 06:45:15.456 UTC [15499] LOG:  redo starts at 0/6D3CEEB0\n2026-09-17 06:45:15.494 UTC [15499] LOG:  redo done at 0/6ED5B9A8 system usage: CPU: user: 0.01 s, system: 0.01 s, elapsed: 0.03 s\n2026-09-17 06:45:15.595 UTC [15497] LOG:  database system is ready to accept connections\nDatabase cluster state:               in production'],
+    ['ロック待ち・デッドロック・タイムアウトのログ',
+      '2026-09-17 06:31:05.678 UTC [9012] postgres@shop LOG:  process 9012 still waiting for ShareLock on transaction 758 after 1002.805 ms\n2026-09-17 06:31:05.678 UTC [9012] postgres@shop DETAIL:  Process holding the lock: 9004. Wait queue: 9012.\n2026-09-17 06:31:05.678 UTC [9012] postgres@shop CONTEXT:  while updating tuple (0,1) in relation "accounts"\n2026-09-17 06:31:22.673 UTC [9012] postgres@shop LOG:  process 9012 acquired ShareLock on transaction 758 after 17997.652 ms\n2026-09-17 06:31:22.673 UTC [9012] postgres@shop CONTEXT:  while updating tuple (0,1) in relation "accounts"\n2026-09-17 06:31:31.774 UTC [9021] postgres@shop DETAIL:  Process holding the lock: 9023. Wait queue: .\n2026-09-17 06:31:31.774 UTC [9021] postgres@shop CONTEXT:  while updating tuple (0,2) in relation "accounts"\n2026-09-17 06:31:31.774 UTC [9021] postgres@shop STATEMENT:  UPDATE accounts SET balance = balance + 1 WHERE id = 2;\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop ERROR:  deadlock detected\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop DETAIL:  Process 9021 waits for ShareLock on transaction 762; blocked by process 9023.\n	Process 9021: UPDATE accounts SET balance = balance + 1 WHERE id = 2;\n	Process 9023: UPDATE accounts SET balance = balance + 1 WHERE id = 1;\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop HINT:  See server log for query details.\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop CONTEXT:  while updating tuple (0,2) in relation "accounts"\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop STATEMENT:  UPDATE accounts SET balance = balance + 1 WHERE id = 2;\n2026-09-17 06:31:34.041 UTC [9036] postgres@shop LOG:  process 9036 still waiting for AccessShareLock on relation 16466 of database 16419 after 1124.460 ms at character 40\n2026-09-17 06:31:34.041 UTC [9036] postgres@shop DETAIL:  Process holding the lock: 9032. Wait queue: 9036.']
+  ],
   refs: [
     ['トランザクションIDの周回エラーの防止', 'routine-vacuuming.html#VACUUM-FOR-WRAPAROUND'],
     ['エラー報告とログ取得', 'runtime-config-logging.html'],
@@ -362,6 +384,10 @@
   ],
   answer: 0,
   exp: 'immediate モードの停止はチェックポイントを行わずに全プロセスを終了させるため、pg_control の状態は稼働中の「in production」のまま残ります。fast や smart で正常に停止した場合は「shut down」になり、同じ環境で fast 停止後に確認すると実際にそう表示されました。\n次に起動すると、サーバは異常終了とみなしてクラッシュリカバリを行います。実際のログは次のとおりです。\n`LOG:  database system was interrupted; last known up at ...`\n`LOG:  database system was not properly shut down; automatic recovery in progress`\n`LOG:  redo starts at 0/6D3CEEB0`\n`LOG:  redo done at 0/6ED5B9A8 ...`\n`LOG:  database system is ready to accept connections`\nクラッシュリカバリに使うのは pg_wal 内の WAL で、アーカイブは不要です。pg_resetwal は通常の起動では決して使いません。',
+  evidence: [
+    ['immediate で停止したあとの pg_controldata と、次の起動',
+      'waiting for server to shut down.... done\nserver stopped\nDatabase cluster state:               in production\n2026-09-17 06:45:14.229 UTC [15499] LOG:  database system was interrupted; last known up at 2026-09-17 06:45:13 UTC\n2026-09-17 06:45:15.450 UTC [15499] LOG:  database system was not properly shut down; automatic recovery in progress\n2026-09-17 06:45:15.456 UTC [15499] LOG:  redo starts at 0/6D3CEEB0\n2026-09-17 06:45:15.494 UTC [15499] LOG:  redo done at 0/6ED5B9A8 system usage: CPU: user: 0.01 s, system: 0.01 s, elapsed: 0.03 s\n2026-09-17 06:45:15.595 UTC [15497] LOG:  database system is ready to accept connections\nDatabase cluster state:               in production\n\nwaiting for server to shut down.... done\nserver stopped\nDatabase cluster state:               shut down\nLatest checkpoint location:           0/6ED5BA98\n application_name | state\n------------------+-------\n(0 rows)']
+  ],
   refs: [
     ['サーバのシャットダウン', 'server-shutdown.html'],
     ['pg_controldata', 'app-pgcontroldata.html'],
@@ -381,6 +407,10 @@
   ],
   answer: [0, 1],
   exp: 'このログは immediate モードで停止した後に、PostgreSQL 14 を起動して実際に出力されたものです。「not properly shut down; automatic recovery in progress」はクラッシュリカバリの開始を表し、最後のチェックポイント（REDO 位置）から pg_wal 内の WAL を再適用しています（redo starts / redo done）。完了すると「ready to accept connections」となり、接続を受け付けます。\nWAL に書き込まれてコミットしたトランザクションは再適用で復元されるため、コミット済みのデータは失われません（synchronous_commit = off の場合を除く）。\nクラッシュリカバリはアーカイブも recovery.signal も使いません。これらはアーカイブリカバリ（PITR）の場合です。',
+  evidence: [
+    ['クラッシュリカバリのログ（immediate 停止のあとの起動）',
+      'waiting for server to shut down.... done\nserver stopped\nDatabase cluster state:               in production\n2026-09-17 06:45:14.229 UTC [15499] LOG:  database system was interrupted; last known up at 2026-09-17 06:45:13 UTC\n2026-09-17 06:45:15.450 UTC [15499] LOG:  database system was not properly shut down; automatic recovery in progress\n2026-09-17 06:45:15.456 UTC [15499] LOG:  redo starts at 0/6D3CEEB0\n2026-09-17 06:45:15.494 UTC [15499] LOG:  redo done at 0/6ED5B9A8 system usage: CPU: user: 0.01 s, system: 0.01 s, elapsed: 0.03 s\n2026-09-17 06:45:15.595 UTC [15497] LOG:  database system is ready to accept connections\nDatabase cluster state:               in production']
+  ],
   refs: [
     ['WALの概要', 'wal-intro.html'],
     ['WALの設定', 'wal-configuration.html']
@@ -399,6 +429,10 @@
   ],
   answer: [0, 1],
   exp: 'A は id=1 → id=2、B は id=2 → id=1 の順に更新しており、互いが先に更新した行を待つ循環になっていました。PostgreSQL はこれを検出すると、どちらか一方（この例では 9021 = A）のトランザクションを中止して循環を解きます。残った B は処理を続けてコミットに成功しています。\nクライアントに返るエラーには相手の SQL が含まれません（HINT が示すとおり）。サーバログの DETAIL に、関係したプロセスそれぞれの SQL が記録されます。\ndeadlock_timeout は検出を始めるまでの待ち時間で、デッドロックの発生自体は防げません。対策は、更新する行の順序をアプリケーションで揃えること（例: id の小さい順）と、中止されたトランザクションを再実行できるようにしておくことです。\n中止されたトランザクションは ROLLBACK するまで以降の文を受け付けません。\nこれらの出力は PostgreSQL 14 で実際に再現したものです。',
+  evidence: [
+    ['デッドロックが起きたときのクライアントの表示とサーバログ',
+      '2026-09-17 06:31:05.678 UTC [9012] postgres@shop LOG:  process 9012 still waiting for ShareLock on transaction 758 after 1002.805 ms\n2026-09-17 06:31:05.678 UTC [9012] postgres@shop DETAIL:  Process holding the lock: 9004. Wait queue: 9012.\n2026-09-17 06:31:05.678 UTC [9012] postgres@shop CONTEXT:  while updating tuple (0,1) in relation "accounts"\n2026-09-17 06:31:22.673 UTC [9012] postgres@shop LOG:  process 9012 acquired ShareLock on transaction 758 after 17997.652 ms\n2026-09-17 06:31:22.673 UTC [9012] postgres@shop CONTEXT:  while updating tuple (0,1) in relation "accounts"\n2026-09-17 06:31:31.774 UTC [9021] postgres@shop DETAIL:  Process holding the lock: 9023. Wait queue: .\n2026-09-17 06:31:31.774 UTC [9021] postgres@shop CONTEXT:  while updating tuple (0,2) in relation "accounts"\n2026-09-17 06:31:31.774 UTC [9021] postgres@shop STATEMENT:  UPDATE accounts SET balance = balance + 1 WHERE id = 2;\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop ERROR:  deadlock detected\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop DETAIL:  Process 9021 waits for ShareLock on transaction 762; blocked by process 9023.\n	Process 9021: UPDATE accounts SET balance = balance + 1 WHERE id = 2;\n	Process 9023: UPDATE accounts SET balance = balance + 1 WHERE id = 1;\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop HINT:  See server log for query details.\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop CONTEXT:  while updating tuple (0,2) in relation "accounts"\n2026-09-17 06:31:31.781 UTC [9021] postgres@shop STATEMENT:  UPDATE accounts SET balance = balance + 1 WHERE id = 2;\n2026-09-17 06:31:34.041 UTC [9036] postgres@shop LOG:  process 9036 still waiting for AccessShareLock on relation 16466 of database 16419 after 1124.460 ms at character 40\n2026-09-17 06:31:34.041 UTC [9036] postgres@shop DETAIL:  Process holding the lock: 9032. Wait queue: 9036.\n\n--- クライアント A ---\n pg_sleep\n----------\n\n(1 row)\n\nERROR:  deadlock detected\nDETAIL:  Process 9021 waits for ShareLock on transaction 762; blocked by process 9023.\nProcess 9023 waits for ShareLock on transaction 761; blocked by process 9021.\nHINT:  See server log for query details.\nCONTEXT:  while updating tuple (0,2) in relation "accounts"\n--- クライアント B ---\n pg_sleep\n----------\n\n(1 row)\n\n--- サーバログ ---\n datname | deadlocks | temp_files | temp_bytes | conflicts\n---------+-----------+------------+------------+-----------\n shop    |         1 |         12 | 33 MB      |         0\n(1 row)']
+  ],
   refs: [
     ['デッドロック', 'explicit-locking.html#LOCKING-DEADLOCKS'],
     ['deadlock_timeout', 'runtime-config-locks.html#GUC-DEADLOCK-TIMEOUT']
@@ -417,6 +451,10 @@
   ],
   answer: [0, 1],
   exp: 'メッセージの重大度に注目します。ERROR はその文（とトランザクション）を中止しますが接続は残ります。FATAL はセッションを終了させます。\n(1) lock_timeout はロックの獲得を待つ時間の上限で、超えると文が取り消されます。文全体の実行時間の上限は (2) の statement_timeout です。\n(3) idle_in_transaction_session_timeout は、トランザクションを開いたまま指定時間を超えて待機したセッションを切断します。古いスナップショットを持ち続けて VACUUM を妨げるのを防ぐ設定です。トランザクション外で待機しているセッションを切断するのは、PostgreSQL 14 で追加された idle_session_timeout です。\nエラーになったトランザクションは中断状態になり、ROLLBACK するまで以降の文を受け付けません。自動的にコミットされることはありません。\nいずれも PostgreSQL 14 で実際に出力されたメッセージです。',
+  evidence: [
+    ['3種類のタイムアウトを試した結果',
+      'ERROR:  canceling statement due to lock timeout\nLINE 1: SET lock_timeout = \'2s\'; SELECT * FROM accounts;\n                                               ^\nERROR:  canceling statement due to statement timeout\nSET\nBEGIN\n ?column?\n----------\n        1\n(1 row)\n\nFATAL:  terminating connection due to idle-in-transaction timeout\nserver closed the connection unexpectedly\n	This probably means the server terminated abnormally\n	before or while processing the request.\nconnection to server was lost']
+  ],
   refs: [
     ['文の動作', 'runtime-config-client.html#RUNTIME-CONFIG-CLIENT-STATEMENT'],
     ['重大度の階層', 'runtime-config-logging.html#RUNTIME-CONFIG-SEVERITY-LEVELS']
@@ -435,6 +473,10 @@
   ],
   answer: 0,
   exp: '一般ユーザが使える接続数は max_connections − superuser_reserved_connections（既定 3）＝ 7 です。7 接続が埋まった状態で一般ユーザが接続しようとすると、このエラーで拒否されます。予約分が残っているため、スーパーユーザは接続でき、実際にこの状態で接続して確認できました（確認用の接続を含めて 8 接続）。\nPostgreSQL には接続の待ち行列はなく、上限に達した接続は即座に拒否されます。\nmax_connections も superuser_reserved_connections も、変更にはサーバの再起動が必要です。\n根本的な対策としては、アプリケーション側で接続プールを使う、不要な接続（idle のまま放置されたものなど）を見直す、といった方法を検討します。\nこのエラーは PostgreSQL 14 で実際に出力されたものです。',
+  evidence: [
+    ['接続数が上限に達したときのエラーと、そのときの接続数',
+      'psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  remaining connection slots are reserved for non-replication superuser connections\n connections | max_connections | reserved\n-------------+-----------------+----------\n           8 | 10              | 3\n(1 row)\n\ndone']
+  ],
   refs: [
     ['接続設定', 'runtime-config-connection.html#RUNTIME-CONFIG-CONNECTION-SETTINGS'],
     ['pg_stat_activity', 'monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW']
@@ -453,6 +495,10 @@
   ],
   answer: 0,
   exp: 'pg_cancel_backend(pid) は実行中の問い合わせだけを取り消し（ERROR: canceling statement due to user request）、接続は残ります。pg_terminate_backend(pid) はそのバックエンドプロセスを終了させるため、接続が切断されます（FATAL: terminating connection due to administrator command）。\n(2) の「server closed the connection unexpectedly」は psql 側の表示で、サーバ全体が異常終了したわけではありません。終了したのは対象のバックエンドだけで、他のセッションやサーバには影響しません。一方、OS の kill -9 でバックエンドを強制終了させると、共有メモリの破損を避けるため全セッションが切断されクラッシュリカバリが走るので、使うべきではありません。\nこれらの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['pg_cancel_backend と pg_terminate_backend を実行した結果',
+      'pg_cancel_backend\n-------------------\n t\n(1 row)\n\nERROR:  canceling statement due to user request\n pg_terminate_backend\n----------------------\n t\n(1 row)\n\nFATAL:  terminating connection due to administrator command\nserver closed the connection unexpectedly\n	This probably means the server terminated abnormally\n	before or while processing the request.\nconnection to server was lost\n\n（同じことを pg_ctl kill で行った場合）\n$ pg_ctl kill INT <pid>\nexit status: 0\nERROR:  canceling statement due to user request\n$ pg_ctl kill TERM <pid>\nexit status: 0\nFATAL:  terminating connection due to administrator command\nserver closed the connection unexpectedly\n	This probably means the server terminated abnormally\n	before or while processing the request.\nconnection to server was lost\n2026-09-18 13:20:59.125 UTC [5007] postgres@terms ERROR:  canceling statement due to user request\n2026-09-18 13:21:00.220 UTC [5014] postgres@terms FATAL:  terminating connection due to administrator command\n$ pg_ctl kill HUP 999999\npg_ctl: could not send signal 1 (PID: 999999): No such process\nexit status: 1']
+  ],
   refs: [
     ['サーバシグナル送信関数', 'functions-admin.html#FUNCTIONS-ADMIN-SIGNAL'],
     ['サーバのシャットダウン', 'server-shutdown.html']
@@ -471,6 +517,10 @@
   ],
   answer: 0,
   exp: 'postmaster.pid は、データディレクトリを使用中の postmaster の PID などを記録したロックファイルです。起動時にこのファイルがあり、記録された PID のプロセスが実際に動いていると、同じデータディレクトリで2つ目のサーバが起動しないよう「lock file "postmaster.pid" already exists」で停止します。この例では PID 6059 のサーバが稼働中でした。\n1つのデータディレクトリを複数のサーバで同時に使うとデータが壊れるため、ポートを変えても起動できません。\nサーバが稼働中なのに postmaster.pid を削除して起動するのは非常に危険です。削除を検討してよいのは、ps などで該当プロセスが存在しないことを確認した場合に限られます（通常は PostgreSQL が古いロックファイルを自動的に判別します）。\nこの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['稼働中のクラスタに対して、同じデータディレクトリで起動した場合',
+      '2026-09-17 06:45:14.046 UTC [6059] LOG:  database system is shut down\n2026-09-17 06:45:15.719 UTC [15497] LOG:  database system is shut down\n2026-09-17 06:45:21.704 UTC [15518] LOG:  database system is shut down\n2026-09-17 06:45:32.135 UTC [15567] LOG:  database system is shut down\n2026-09-17 06:45:13.925 UTC [15491] FATAL:  lock file "postmaster.pid" already exists\n2026-09-17 06:45:13.925 UTC [15491] HINT:  Is another postmaster (PID 6059) running in data directory "/var/lib/pgsql/14/primary"?']
+  ],
   refs: [
     ['データベースサーバの起動', 'server-start.html'],
     ['データベースファイルのレイアウト', 'storage-file-layout.html']
@@ -525,6 +575,10 @@
   ],
   answer: [0, 1],
   exp: 'pg_ctl kill シグナル名 PID は、指定したプロセスにシグナルを送ります。ドキュメントでは、組み込みの kill コマンドがない Microsoft Windows で特に役立つとされています。\nバックエンドに SIGINT を送ると、実行中の問い合わせだけが取り消され（canceling statement due to user request）、セッションはそのまま使えます。SIGTERM を送ると、セッションが終了します（terminating connection due to administrator command）。それぞれ SQL の pg_cancel_backend() と pg_terminate_backend() と同じ効果です。\nSIGTERM による終了は正常な終了処理なので、他のセッションには影響しません。一方、SIGKILL などでバックエンドが異常終了した場合は、共有メモリを守るために postmaster が他のサーバプロセスもすべて終了させ、クラッシュリカバリを行います。',
+  evidence: [
+    ['pg_ctl kill INT / TERM と、存在しない PID を指定した場合',
+      '$ pg_ctl kill INT <pid>\nexit status: 0\nERROR:  canceling statement due to user request\n$ pg_ctl kill TERM <pid>\nexit status: 0\nFATAL:  terminating connection due to administrator command\nserver closed the connection unexpectedly\n	This probably means the server terminated abnormally\n	before or while processing the request.\nconnection to server was lost\n2026-09-18 13:20:59.125 UTC [5007] postgres@terms ERROR:  canceling statement due to user request\n2026-09-18 13:21:00.220 UTC [5014] postgres@terms FATAL:  terminating connection due to administrator command\n$ pg_ctl kill HUP 999999\npg_ctl: could not send signal 1 (PID: 999999): No such process\nexit status: 1']
+  ],
   refs: [
     ['pg_ctl', 'app-pg-ctl.html'],
     ['サーバシグナル送信関数', 'functions-admin.html#FUNCTIONS-ADMIN-SIGNAL'],
@@ -544,6 +598,10 @@
   ],
   answer: 0,
   exp: 'バックエンドがシグナル 11（セグメンテーションフォルト）などで異常終了すると、そのプロセスが共有メモリを壊した可能性があります。そのため postmaster は、他のサーバプロセスにもトランザクションをロールバックして終了するよう指示し（terminating any other active server processes）、共有メモリを初期化し直します。その後、WAL を使ったクラッシュリカバリ（redo）を行って、接続の受け付けを再開します。\npostmaster 自身は動き続けているため、手動で起動し直す必要はありません。リカバリ中は接続が拒否され、pg_isready は rejecting connections（終了ステータス 1）を返しました。\n切断されたセッションの未コミットのトランザクションは失われます。実機でも、INSERT した行は再接続後に残っていませんでした。\nこの動作は restart_after_crash = on（既定）の場合です。off にすると、postmaster は再初期化せずに終了します（クラスタ管理ソフトウェアに再起動を任せる場合に使います）。いずれの場合も、他のセッションは切断されます。',
+  evidence: [
+    ['バックエンドをシグナル11で落としたときのログとセッションの表示',
+      '--- 落ちたセッション\nserver closed the connection unexpectedly\n	This probably means the server terminated abnormally\n	before or while processing the request.\nconnection to server was lost\n--- 別のセッション\nWARNING:  terminating connection because of crash of another server process\nDETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.\nHINT:  In a moment you should be able to reconnect to the database and repeat your command.\nserver closed the connection unexpectedly\n	This probably means the server terminated abnormally\n	before or while processing the request.\nconnection to server was lost\n--- サーバログ\n2026-09-18 13:20:53.453 UTC [4857] LOG:  database system is ready to accept connections\n2026-09-18 13:21:04.298 UTC [4857] LOG:  server process (PID 5027) was terminated by signal 11: Segmentation fault\n2026-09-18 13:21:04.298 UTC [4857] DETAIL:  Failed process was running: SELECT pg_sleep(30);\n2026-09-18 13:21:04.298 UTC [4857] LOG:  terminating any other active server processes\n2026-09-18 13:21:04.301 UTC [4857] LOG:  all server processes terminated; reinitializing\n2026-09-18 13:21:04.334 UTC [5042] LOG:  database system was interrupted; last known up at 2026-09-18 13:20:54 UTC\nterms=# SELECT count(*) FROM emp WHERE name = \'x\';\npsql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: FATAL:  the database system is in recovery mode\n$ pg_isready -p 5432\n/run/postgresql:5432 - rejecting connections\nexit status: 1']
+  ],
   refs: [
     ['restart_after_crash', 'runtime-config-error-handling.html#GUC-RESTART-AFTER-CRASH'],
     ['WALの信頼性', 'wal-reliability.html'],
@@ -667,6 +725,10 @@
   ],
   answer: 4,
   exp: 'ハードウェアの故障などによるデータファイルの物理的な破損は、PostgreSQL のコマンドで修復することはできません。原因となったハードウェアを交換・修理したうえで、正常なベースバックアップと WAL アーカイブからリカバリ（必要に応じて PITR）するのが基本的な対処です。そのため、定期的なバックアップの取得と、リストア手順の確認が重要です。\nREINDEX で直せるのはインデックスの破損だけで、pg_resetwal は WAL と制御情報を初期化するコマンドです。VACUUM FULL は破損したページを読み込めずに失敗します。fsync = off はクラッシュ時の破損の原因になります。',
+  evidence: [
+    ['チェックサムを有効にしたクラスタでデータファイルを壊した場合',
+      'data_checksums\n----------------\n on\n(1 row)\n\n繝・・繧ｿ繝輔ぃ繧､繝ｫ: $PGDATA/base/13806/16384\n--- 繝輔ぃ繧､繝ｫ縺ｮ荳驛ｨ繧呈嶌縺肴鋤縺医※遐ｴ謳阪＆縺帙ｋ\n=# SELECT count(*) FROM t;\nWARNING:  page verification failed, calculated checksum 48581 but expected 19451\nERROR:  invalid page in block 1 of relation base/13806/16384\n--- ignore_checksum_failure = on 縺ｫ縺励◆蝣ｴ蜷茨ｼ郁ｭｦ蜻翫↓縺ｪ繧九′縲∝・螳ｹ縺ｯ螢翫ｌ縺溘∪縺ｾ・・WARNING:  page verification failed, calculated checksum 48581 but expected 19451\n count\n-------\n  5000\n(1 row)\n--- pg_checksums 縺ｧ繧ｯ繝ｩ繧ｹ繧ｿ蜈ｨ菴薙ｒ讀懈渊・医し繝ｼ繝仙●豁｢荳ｭ縺ｫ螳溯｡鯉ｼ・Checksum operation completed\nFiles scanned:  935\nBlocks scanned: 3320\nBad checksums:  0\nData checksum version: 1']
+  ],
   refs: [
     ['継続的アーカイブとポイントインタイムリカバリ', 'continuous-archiving.html'],
     ['信頼性', 'wal-reliability.html']
@@ -809,6 +871,10 @@
   ],
   answer: 3,
   exp: '論理レプリケーションの適用で制約違反などのエラーが発生すると、そのトランザクションの適用は失敗し、ワーカーは再試行を繰り返すため、以降の変更は反映されません。エラーの内容はサブスクライバのサーバログで確認できます。\n解決するには、サブスクライバ側の競合するデータを修正（削除など）するか、pg_replication_origin_advance() でレプリケーション起点の位置を進めて、該当トランザクションを読み飛ばします（読み飛ばした変更はサブスクライバに反映されない点に注意）。\nなお PostgreSQL 15 以降は ALTER SUBSCRIPTION ... SKIP でも読み飛ばしが可能です。',
+  evidence: [
+    ['サブスクライバ側で一意制約違反が起きたときの状態とログ',
+      'NOTICE:  created replication slot "sub_items" on publisher\n--- パブリッシャ ---\n id | name\n----+------\n  1 | pen\n  2 | note\n  3 | ink\n(3 rows)\n\n--- サブスクライバ ---\n id |    name\n----+------------\n  1 | pen\n  2 | local-note\n(2 rows)\n\n  subname  | pid | received_lsn | latest_end_lsn | last_msg_receipt_time\n-----------+-----+--------------+----------------+-----------------------\n sub_items |     |              |                |\n(1 row)\n\n slot_name | slot_type | database | active | wal_status\n-----------+-----------+----------+--------+------------\n standby1  | physical  |          | t      | reserved\n sub_items | logical   | shop     | f      | reserved\n(2 rows)\n\n--- サブスクライバのログ ---\n2026-09-17 06:46:54.543 UTC [17384] DETAIL:  Key (id)=(2) already exists.\n2026-09-17 06:46:54.544 UTC [17324] LOG:  background worker "logical replication worker" (PID 17384) exited with exit code 1\n2026-09-17 06:46:59.677 UTC [17391] ERROR:  duplicate key value violates unique constraint "items_pkey"\n2026-09-17 06:46:59.677 UTC [17391] DETAIL:  Key (id)=(2) already exists.\n2026-09-17 06:46:59.678 UTC [17324] LOG:  background worker "logical replication worker" (PID 17391) exited with exit code 1\n--- 競合行を削除した後のサブスクライバ ---\n id | name\n----+------\n  1 | pen\n  2 | note\n  3 | ink\n(3 rows)\n\nNOTICE:  dropped replication slot "sub_items" on publisher']
+  ],
   refs: [
     ['論理レプリケーションのコンフリクト', 'logical-replication-conflicts.html'],
     ['レプリケーション起点管理関数', 'functions-admin.html#FUNCTIONS-REPLICATION']
@@ -826,6 +892,10 @@
   ],
   answer: 1,
   exp: 'スタンバイが停止していたり遅延したりしている間に、スタンバイが次に必要とする WAL がプライマリで削除されると、ストリーミングレプリケーションで取得できずに停止します。\nWAL アーカイブがあれば、スタンバイの restore_command でアーカイブから取得して追いつかせることができます。アーカイブにもない場合は、pg_basebackup などでスタンバイを再構築します。\n再発防止には、レプリケーションスロットの使用（max_slot_wal_keep_size で上限を設定）、wal_keep_size による WAL の保持、WAL アーカイブと restore_command の併用などを検討します。standby.signal を削除するとスタンバイではなくなるため、対処にはなりません。',
+  evidence: [
+    ['スロットがない状態でスタンバイを長時間止めた場合',
+      '=# SELECT slot_name, active, wal_status FROM pg_replication_slots;\n slot_name | active | wal_status\n-----------+--------+------------\n(0 rows)\n\n=# SHOW wal_keep_size;\n wal_keep_size\n---------------\n 0\n(1 row)\n\n=# SELECT pg_walfile_name(pg_current_wal_lsn()) AS wal_before;\n        wal_before\n--------------------------\n 0000000100000000000000C1\n(1 row)\n\n--- WAL 繧帝ｲ繧√※繝√ぉ繝・け繝昴う繝ｳ繝医☆繧具ｼ医せ繧ｿ繝ｳ繝舌う縺悟ｿ・ｦ√→縺吶ｋ蜿､縺・WAL 縺ｯ蜑企勁繝ｻ蜀榊茜逕ｨ縺輔ｌ繧具ｼ・=# SELECT pg_walfile_name(pg_current_wal_lsn()) AS wal_after;\n        wal_after\n--------------------------\n 0000000100000000000000C9\n(1 row)\n\n/var/lib/pgsql/14/standby/postgresql.auto.conf:3:primary_conninfo = \'application_name=standby1 user=postgres passfile=\'\'/var/lib/pgsql/.pgpass\'\' channel_binding=prefer host=127.0.0.1 port=5432 sslmode=prefer sslcompression=0 sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=prefer krbsrvname=postgres target_session_attrs=any\'\n/var/lib/pgsql/14/standby/postgresql.auto.conf:4:primary_slot_name = \'standby1\'\n/var/lib/pgsql/14/standby/postgresql.conf:322:#primary_conninfo = \'\'			# connection string to sending server\n/var/lib/pgsql/14/standby/postgresql.conf:323:#primary_slot_name = \'\'			# replication slot on sending server\n--- primary_slot_name 繧貞､悶＠縺ｦ繧ｹ繧ｿ繝ｳ繝舌う繧定ｵｷ蜍・2026-09-21 04:40:03.277 UTC [105768] LOG:  redo starts at 0/9A000028\n2026-09-21 04:40:03.278 UTC [105768] LOG:  consistent recovery state reached at 0/9A000770\n2026-09-21 04:40:03.278 UTC [105768] LOG:  invalid record length at 0/9A000770: wanted 24, got 0\n2026-09-21 04:40:03.279 UTC [105766] LOG:  database system is ready to accept read-only connections\n2026-09-21 04:40:03.290 UTC [105772] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:03.290 UTC [105772] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:03.298 UTC [105774] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:03.298 UTC [105774] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:08.342 UTC [105777] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:08.343 UTC [105777] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:13.312 UTC [105780] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:13.313 UTC [105780] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n--- 繧ｹ繧ｿ繝ｳ繝舌う縺ｮ迥ｶ諷・ pg_is_in_recovery | pg_last_wal_receive_lsn | pg_last_wal_replay_lsn\n-------------------+-------------------------+------------------------\n t                 | 0/9A000000              | 0/9A000770\n(1 row)\n\n--- 繝励Λ繧､繝槭Μ縺ｮ WAL 菴咲ｽｮ\n       primary_wal        | replication_connections\n--------------------------+-------------------------\n 0000000100000000000000C9 |                       0\n(1 row)']
+  ],
   refs: [
     ['ストリーミングレプリケーション', 'warm-standby.html#STREAMING-REPLICATION'],
     ['wal_keep_size', 'runtime-config-replication.html#GUC-WAL-KEEP-SIZE']
@@ -860,6 +930,12 @@
   ],
   answer: 0,
   exp: 'レプリケーションスロットは、接続先がまだ受信していない WAL をサーバに保持させます。スタンバイが長期間停止していると WAL が削除されず、pg_wal が増え続けます。\nPostgreSQL 13 以降は max_slot_wal_keep_size を設定することで、スロットが保持できる WAL の上限を決められます。上限を超えるとスロットは無効化され（pg_replication_slots の wal_status が lost になり）、そのスタンバイは再構築が必要になりますが、プライマリのディスク枯渇は防げます。\n不要になったスロットは pg_drop_replication_slot() で削除できます。\nwal_keep_size はスロットを使わない場合に WAL を追加保持する設定です。',
+  evidence: [
+    ['スロットがある場合、スタンバイを止めている間 WAL が保持され続ける',
+      'pg_reload_conf\n----------------\n t\n(1 row)\n\n slot_name | slot_type | active | restart_lsn | wal_status | safe_wal_size\n-----------+-----------+--------+-------------+------------+---------------\n standby1  | physical  | f      | 0/1A456D28  | reserved   | 76 MB\n(1 row)\n\n slot_name | slot_type | active | restart_lsn | wal_status | safe_wal_size\n-----------+-----------+--------+-------------+------------+---------------\n standby1  | physical  | f      |             | lost       |\n(1 row)\n\n--- プライマリのログ ---\n2026-09-17 06:44:20.556 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-17 06:44:22.291 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-17 06:44:23.816 UTC [6062] LOG:  checkpoints are occurring too frequently (1 second apart)\n2026-09-17 06:44:25.643 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)'],
+    ['スロットがない場合は WAL が削除され、スタンバイが追いつけなくなる',
+      '=# SELECT slot_name, active, wal_status FROM pg_replication_slots;\n slot_name | active | wal_status\n-----------+--------+------------\n(0 rows)\n\n=# SHOW wal_keep_size;\n wal_keep_size\n---------------\n 0\n(1 row)\n\n=# SELECT pg_walfile_name(pg_current_wal_lsn()) AS wal_before;\n        wal_before\n--------------------------\n 0000000100000000000000C1\n(1 row)\n\n--- WAL 繧帝ｲ繧√※繝√ぉ繝・け繝昴う繝ｳ繝医☆繧具ｼ医せ繧ｿ繝ｳ繝舌う縺悟ｿ・ｦ√→縺吶ｋ蜿､縺・WAL 縺ｯ蜑企勁繝ｻ蜀榊茜逕ｨ縺輔ｌ繧具ｼ・=# SELECT pg_walfile_name(pg_current_wal_lsn()) AS wal_after;\n        wal_after\n--------------------------\n 0000000100000000000000C9\n(1 row)\n\n/var/lib/pgsql/14/standby/postgresql.auto.conf:3:primary_conninfo = \'application_name=standby1 user=postgres passfile=\'\'/var/lib/pgsql/.pgpass\'\' channel_binding=prefer host=127.0.0.1 port=5432 sslmode=prefer sslcompression=0 sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=prefer krbsrvname=postgres target_session_attrs=any\'\n/var/lib/pgsql/14/standby/postgresql.auto.conf:4:primary_slot_name = \'standby1\'\n/var/lib/pgsql/14/standby/postgresql.conf:322:#primary_conninfo = \'\'			# connection string to sending server\n/var/lib/pgsql/14/standby/postgresql.conf:323:#primary_slot_name = \'\'			# replication slot on sending server\n--- primary_slot_name 繧貞､悶＠縺ｦ繧ｹ繧ｿ繝ｳ繝舌う繧定ｵｷ蜍・2026-09-21 04:40:03.277 UTC [105768] LOG:  redo starts at 0/9A000028\n2026-09-21 04:40:03.278 UTC [105768] LOG:  consistent recovery state reached at 0/9A000770\n2026-09-21 04:40:03.278 UTC [105768] LOG:  invalid record length at 0/9A000770: wanted 24, got 0\n2026-09-21 04:40:03.279 UTC [105766] LOG:  database system is ready to accept read-only connections\n2026-09-21 04:40:03.290 UTC [105772] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:03.290 UTC [105772] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:03.298 UTC [105774] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:03.298 UTC [105774] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:08.342 UTC [105777] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:08.343 UTC [105777] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:13.312 UTC [105780] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:13.313 UTC [105780] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n--- 繧ｹ繧ｿ繝ｳ繝舌う縺ｮ迥ｶ諷・ pg_is_in_recovery | pg_last_wal_receive_lsn | pg_last_wal_replay_lsn\n-------------------+-------------------------+------------------------\n t                 | 0/9A000000              | 0/9A000770\n(1 row)\n\n--- 繝励Λ繧､繝槭Μ縺ｮ WAL 菴咲ｽｮ\n       primary_wal        | replication_connections\n--------------------------+-------------------------\n 0000000100000000000000C9 |                       0\n(1 row)']
+  ],
   refs: [
     ['max_slot_wal_keep_size', 'runtime-config-replication.html#GUC-MAX-SLOT-WAL-KEEP-SIZE'],
     ['レプリケーションスロット', 'warm-standby.html#STREAMING-REPLICATION-SLOTS'],
@@ -895,6 +971,10 @@
   ],
   answer: 0,
   exp: '同期レプリケーションでは、コミットは指定された数の同期スタンバイから WAL の受信応答が返るまで完了しません。同期スタンバイがすべて停止すると、コミットしようとしたセッションは待機し続けます（参照系の問い合わせは影響を受けません）。\n復旧が長引く場合は、synchronous_standby_names を空にして設定を再読み込みするか、該当セッションで synchronous_commit を local や off に変更することで待機を解消できます。\n自動的に非同期へ切り替わる仕組みはないため、可用性を重視するなら同期スタンバイを複数台用意し、`ANY 1 (s1, s2)` のように指定します。',
+  evidence: [
+    ['同期スタンバイを停止した状態でコミットした場合',
+      'WARNING:  canceling wait for synchronous replication due to user request\nDETAIL:  The transaction has already committed locally, but might not have been replicated to the standby.\nINSERT 0 1\n  pid  | state  | wait_event_type | wait_event |                query\n-------+--------+-----------------+------------+--------------------------------------\n 13861 | active | IPC             | SyncRep    | INSERT INTO accounts VALUES (11, 0);\n(1 row)\n\n pg_reload_conf\n----------------\n t\n(1 row)\n\n--- 待たされていたクライアント ---\nINSERT 0 1']
+  ],
   refs: [
     ['同期レプリケーション', 'warm-standby.html#SYNCHRONOUS-REPLICATION'],
     ['synchronous_standby_names', 'runtime-config-replication.html#GUC-SYNCHRONOUS-STANDBY-NAMES']
@@ -929,6 +1009,10 @@
   ],
   answer: [0, 1],
   exp: '論理レプリケーションでは、サブスクライバ側の一意制約違反などで適用が止まり、以後の変更が進まなくなります。サーバログに競合の内容が記録されるため、原因となっている行を修正・削除して適用を再開させるのが基本の対処です。\nどうしてもそのトランザクションを飛ばしたい場合は、ログに出力された LSN を使って pg_replication_origin_advance() で適用位置を進めます（データの不整合が残る点に注意が必要です）。\n適用が止まっている間、パブリッシャ側ではスロットが WAL を保持し続けるため、放置するとディスクを圧迫します。DISABLE にしても、その間の WAL は保持されたままです。',
+  evidence: [
+    ['競合の解消（競合する行を削除すると適用が再開する）',
+      'NOTICE:  created replication slot "sub_items" on publisher\n--- パブリッシャ ---\n id | name\n----+------\n  1 | pen\n  2 | note\n  3 | ink\n(3 rows)\n\n--- サブスクライバ ---\n id |    name\n----+------------\n  1 | pen\n  2 | local-note\n(2 rows)\n\n  subname  | pid | received_lsn | latest_end_lsn | last_msg_receipt_time\n-----------+-----+--------------+----------------+-----------------------\n sub_items |     |              |                |\n(1 row)\n\n slot_name | slot_type | database | active | wal_status\n-----------+-----------+----------+--------+------------\n standby1  | physical  |          | t      | reserved\n sub_items | logical   | shop     | f      | reserved\n(2 rows)\n\n--- サブスクライバのログ ---\n2026-09-17 06:46:54.543 UTC [17384] DETAIL:  Key (id)=(2) already exists.\n2026-09-17 06:46:54.544 UTC [17324] LOG:  background worker "logical replication worker" (PID 17384) exited with exit code 1\n2026-09-17 06:46:59.677 UTC [17391] ERROR:  duplicate key value violates unique constraint "items_pkey"\n2026-09-17 06:46:59.677 UTC [17391] DETAIL:  Key (id)=(2) already exists.\n2026-09-17 06:46:59.678 UTC [17324] LOG:  background worker "logical replication worker" (PID 17391) exited with exit code 1\n--- 競合行を削除した後のサブスクライバ ---\n id | name\n----+------\n  1 | pen\n  2 | note\n  3 | ink\n(3 rows)\n\nNOTICE:  dropped replication slot "sub_items" on publisher']
+  ],
   refs: [
     ['論理レプリケーションの競合', 'logical-replication-conflicts.html'],
     ['レプリケーション関数', 'functions-admin.html#FUNCTIONS-REPLICATION']
@@ -964,6 +1048,10 @@
   ],
   answer: 0,
   exp: 'sent_lsn と flush_lsn が同じなので、送信とスタンバイでのディスク保存までは追いついています。遅れているのは replay_lsn だけで、差（pg_wal_lsn_diff(sent_lsn, replay_lsn)）は 54 MB です。\nスタンバイの pg_is_wal_replay_paused() が t（true）なので、pg_wal_replay_pause() などで WAL の適用が一時停止されていることが原因です。pg_wal_replay_resume() で再開すると追いつきました。\nネットワークが原因なら sent_lsn と write_lsn の間に、スタンバイのディスクが原因なら write_lsn と flush_lsn の間に差が出ます。\nなお、この状態で pg_stat_replication の replay_lag 列は 2 秒程度を示していました。replay_lag はスタンバイからの応答に基づく値なので、適用が止まっている間は実態を表さないことがあり、LSN の差やスタンバイ側の関数も合わせて確認します。\nこの結果は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['適用を一時停止して遅延させたときの、プライマリとスタンバイの状態',
+      'pg_wal_replay_pause\n---------------------\n\n(1 row)\n\n application_name |   state   |  sent_lsn  | write_lsn  | flush_lsn  | replay_lsn | replay_behind |   replay_lag   | sync_state\n------------------+-----------+------------+------------+------------+------------+---------------+----------------+------------\n standby1         | streaming | 0/19B628C0 | 0/19B628C0 | 0/19B628C0 | 0/16569C78 | 54 MB         | 00:00:02.00898 | async\n(1 row)\n\n pg_last_wal_receive_lsn | pg_last_wal_replay_lsn | pg_is_wal_replay_paused |  replay_delay\n-------------------------+------------------------+-------------------------+-----------------\n 0/19B628C0              | 0/16569C78             | t                       | 00:00:11.755934\n(1 row)\n\n pg_wal_replay_resume\n----------------------\n\n(1 row)']
+  ],
   refs: [
     ['pg_stat_replication', 'monitoring-stats.html#MONITORING-PG-STAT-REPLICATION-VIEW'],
     ['リカバリ制御関数', 'functions-admin.html#FUNCTIONS-RECOVERY-CONTROL']
@@ -982,6 +1070,10 @@
   ],
   answer: [0, 1],
   exp: 'wait_event_type が IPC、wait_event が SyncRep の状態は、コミットの WAL が同期スタンバイで保存されるのを待っていることを表します。FIRST 1 (standby1, standby2) は「リストの先頭から接続中の1台を同期スタンバイにする」設定で、接続中の候補がないと同期スタンバイが不在になり、コミットは待ち続けます。\nこの待ちはコミット処理の中で発生するため、statement_timeout（4秒）を設定していても打ち切られませんでした。実際に約10分待ち続けています。\n自動的に非同期へ切り替わる仕組みはありません。解消するには、スタンバイを復旧させるか、synchronous_standby_names を空にして再読み込みします。\nこのとき、プライマリの WAL にはすでにコミットレコードが書き込まれており、ロールバックはされていません。\nこの状況は PostgreSQL 14 で実際に再現したものです。',
+  evidence: [
+    ['同期スタンバイが停止しているときのコミットと pg_stat_activity',
+      'WARNING:  canceling wait for synchronous replication due to user request\nDETAIL:  The transaction has already committed locally, but might not have been replicated to the standby.\nINSERT 0 1\n  pid  | state  | wait_event_type | wait_event |                query\n-------+--------+-----------------+------------+--------------------------------------\n 13861 | active | IPC             | SyncRep    | INSERT INTO accounts VALUES (11, 0);\n(1 row)\n\n pg_reload_conf\n----------------\n t\n(1 row)\n\n--- 待たされていたクライアント ---\nINSERT 0 1\n\n（そのまま待ち続けたときの様子）\npid  | state  | wait_event_type | wait_event |    waiting     |                          query\n-------+--------+-----------------+------------+----------------+---------------------------------------------------------\n 13315 | active | IPC             | SyncRep    | 00:09:53.79481 | SET statement_timeout = \'4s\'; INSERT INTO accounts VALU\n(1 row)']
+  ],
   refs: [
     ['同期レプリケーション', 'warm-standby.html#SYNCHRONOUS-REPLICATION'],
     ['synchronous_standby_names', 'runtime-config-replication.html#GUC-SYNCHRONOUS-STANDBY-NAMES'],
@@ -1001,6 +1093,10 @@
   ],
   answer: 0,
   exp: '同期レプリケーションの待ちは、コミットの WAL をプライマリのディスクに書き込んだ後に始まります。そのため待ちをキャンセルしても、プライマリ上のコミットは取り消されません。メッセージのとおり「ローカルではコミット済みだが、スタンバイには複製されていない可能性がある」状態で、INSERT した行はプライマリで参照できます。\n同期レプリケーションはコミットの完了応答をスタンバイへの保存まで遅らせる仕組みなので、このようにキャンセルした場合やプライマリが障害になった場合には、アプリケーションに成功を返していないトランザクションがプライマリには存在する、ということが起こりえます。\nsynchronous_standby_names の設定は変わりません。\nこの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['待っているコミットを取り消したときの警告',
+      'WARNING:  canceling wait for synchronous replication due to user request\nDETAIL:  The transaction has already committed locally, but might not have been replicated to the standby.\nINSERT 0 1\n  pid  | state  | wait_event_type | wait_event |                query\n-------+--------+-----------------+------------+--------------------------------------\n 13861 | active | IPC             | SyncRep    | INSERT INTO accounts VALUES (11, 0);\n(1 row)\n\n pg_reload_conf\n----------------\n t\n(1 row)\n\n--- 待たされていたクライアント ---\nINSERT 0 1\n\n（待ち続けているセッションの状態）\npid  | state  | wait_event_type | wait_event |    waiting     |                          query\n-------+--------+-----------------+------------+----------------+---------------------------------------------------------\n 13315 | active | IPC             | SyncRep    | 00:09:53.79481 | SET statement_timeout = \'4s\'; INSERT INTO accounts VALU\n(1 row)']
+  ],
   refs: [
     ['同期レプリケーション', 'warm-standby.html#SYNCHRONOUS-REPLICATION'],
     ['サーバシグナル送信関数', 'functions-admin.html#FUNCTIONS-ADMIN-SIGNAL']
@@ -1019,6 +1115,12 @@
   ],
   answer: [0, 1],
   exp: 'レプリケーションスロットは、接続先がまだ受け取っていない WAL をプライマリに保持させます。PostgreSQL 13 以降は max_slot_wal_keep_size で保持量の上限を設けられ、超えるとチェックポイント時にそのスロットが必要とする WAL も削除され、wal_status が lost になります。safe_wal_size は、あとどれだけ WAL が生成されると lost になるかの目安です。\nその後スタンバイを起動すると、必要な WAL セグメントがすでに削除されているため「requested WAL segment ... has already been removed」で接続が失敗し、再試行しても回復しません。この構成では欠けた WAL を取得する手段がないため、ベースバックアップからスタンバイを作り直す必要があります（実際にこの環境でも作り直しました）。\nなお、WAL アーカイブを構成し、スタンバイに restore_command を設定していれば、欠けた WAL をアーカイブから取得して追いつける場合があります。プライマリが削除済みの WAL を生成し直すことはなく、削除された WAL は設定を変えても戻りません。上限はプライマリのディスク枯渇を防ぐ代わりに、スタンバイを犠牲にする設定であることを理解して値を決めます。\nこの状況は PostgreSQL 14 で実際に再現したものです。',
+  evidence: [
+    ['スロットが WAL を保持している状態（スタンバイ停止中）',
+      'pg_reload_conf\n----------------\n t\n(1 row)\n\n slot_name | slot_type | active | restart_lsn | wal_status | safe_wal_size\n-----------+-----------+--------+-------------+------------+---------------\n standby1  | physical  | f      | 0/1A456D28  | reserved   | 76 MB\n(1 row)\n\n slot_name | slot_type | active | restart_lsn | wal_status | safe_wal_size\n-----------+-----------+--------+-------------+------------+---------------\n standby1  | physical  | f      |             | lost       |\n(1 row)\n\n--- プライマリのログ ---\n2026-09-17 06:44:20.556 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-17 06:44:22.291 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)\n2026-09-17 06:44:23.816 UTC [6062] LOG:  checkpoints are occurring too frequently (1 second apart)\n2026-09-17 06:44:25.643 UTC [6062] LOG:  checkpoints are occurring too frequently (2 seconds apart)'],
+    ['必要な WAL が失われた状態でスタンバイを起動した場合（スロットを外して同じ状況を再現）',
+      '=# SELECT slot_name, active, wal_status FROM pg_replication_slots;\n slot_name | active | wal_status\n-----------+--------+------------\n(0 rows)\n\n=# SHOW wal_keep_size;\n wal_keep_size\n---------------\n 0\n(1 row)\n\n=# SELECT pg_walfile_name(pg_current_wal_lsn()) AS wal_before;\n        wal_before\n--------------------------\n 0000000100000000000000C1\n(1 row)\n\n--- WAL 繧帝ｲ繧√※繝√ぉ繝・け繝昴う繝ｳ繝医☆繧具ｼ医せ繧ｿ繝ｳ繝舌う縺悟ｿ・ｦ√→縺吶ｋ蜿､縺・WAL 縺ｯ蜑企勁繝ｻ蜀榊茜逕ｨ縺輔ｌ繧具ｼ・=# SELECT pg_walfile_name(pg_current_wal_lsn()) AS wal_after;\n        wal_after\n--------------------------\n 0000000100000000000000C9\n(1 row)\n\n/var/lib/pgsql/14/standby/postgresql.auto.conf:3:primary_conninfo = \'application_name=standby1 user=postgres passfile=\'\'/var/lib/pgsql/.pgpass\'\' channel_binding=prefer host=127.0.0.1 port=5432 sslmode=prefer sslcompression=0 sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=prefer krbsrvname=postgres target_session_attrs=any\'\n/var/lib/pgsql/14/standby/postgresql.auto.conf:4:primary_slot_name = \'standby1\'\n/var/lib/pgsql/14/standby/postgresql.conf:322:#primary_conninfo = \'\'			# connection string to sending server\n/var/lib/pgsql/14/standby/postgresql.conf:323:#primary_slot_name = \'\'			# replication slot on sending server\n--- primary_slot_name 繧貞､悶＠縺ｦ繧ｹ繧ｿ繝ｳ繝舌う繧定ｵｷ蜍・2026-09-21 04:40:03.277 UTC [105768] LOG:  redo starts at 0/9A000028\n2026-09-21 04:40:03.278 UTC [105768] LOG:  consistent recovery state reached at 0/9A000770\n2026-09-21 04:40:03.278 UTC [105768] LOG:  invalid record length at 0/9A000770: wanted 24, got 0\n2026-09-21 04:40:03.279 UTC [105766] LOG:  database system is ready to accept read-only connections\n2026-09-21 04:40:03.290 UTC [105772] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:03.290 UTC [105772] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:03.298 UTC [105774] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:03.298 UTC [105774] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:08.342 UTC [105777] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:08.343 UTC [105777] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n2026-09-21 04:40:13.312 UTC [105780] LOG:  started streaming WAL from primary at 0/9A000000 on timeline 1\n2026-09-21 04:40:13.313 UTC [105780] FATAL:  could not receive data from WAL stream: ERROR:  requested WAL segment 00000001000000000000009A has already been removed\n--- 繧ｹ繧ｿ繝ｳ繝舌う縺ｮ迥ｶ諷・ pg_is_in_recovery | pg_last_wal_receive_lsn | pg_last_wal_replay_lsn\n-------------------+-------------------------+------------------------\n t                 | 0/9A000000              | 0/9A000770\n(1 row)\n\n--- 繝励Λ繧､繝槭Μ縺ｮ WAL 菴咲ｽｮ\n       primary_wal        | replication_connections\n--------------------------+-------------------------\n 0000000100000000000000C9 |                       0\n(1 row)']
+  ],
   refs: [
     ['max_slot_wal_keep_size', 'runtime-config-replication.html#GUC-MAX-SLOT-WAL-KEEP-SIZE'],
     ['pg_replication_slots', 'view-pg-replication-slots.html'],
@@ -1038,6 +1140,10 @@
   ],
   answer: [0, 1],
   exp: 'スタンバイで古いスナップショットを使う問い合わせを実行中に、プライマリの VACUUM がその時点では見えるはずの行を削除すると、その WAL を適用するかどうかでリカバリ競合が起きます。スタンバイは max_standby_streaming_delay（この例では 5 秒）だけ適用を待ち、それを超えると問い合わせを取り消します。pg_stat_database_conflicts の confl_snapshot が 1 になっており、スナップショットによる競合だと分かります。\nhot_standby_feedback = on にすると、スタンバイの実行中トランザクションの情報がプライマリに伝わり、プライマリの VACUUM が必要な行を残すため、この種類の競合を防ぎやすくなります（代わりにプライマリの肥大化が起きえます）。\nmax_standby_streaming_delay を 0 にすると、待たずにすぐ取り消されます。無期限に待つのは -1 です。\nこの状況は PostgreSQL 14 で実際に再現したものです。',
+  evidence: [
+    ['ホットスタンバイで問い合わせがリカバリと競合した場合',
+      'ERROR:  VACUUM cannot run inside a transaction block\n--- スタンバイ側クライアント ---\nCOMMIT\n--- スタンバイのログ ---\n datname | confl_tablespace | confl_lock | confl_snapshot | confl_bufferpin | confl_deadlock\n---------+------------------+------------+----------------+-----------------+----------------\n shop    |                0 |          0 |              0 |               0 |              0\n(1 row)']
+  ],
   refs: [
     ['ホットスタンバイでの競合の処理', 'hot-standby.html#HOT-STANDBY-CONFLICT'],
     ['pg_stat_database_conflicts', 'monitoring-stats.html#MONITORING-PG-STAT-DATABASE-CONFLICTS-VIEW'],
@@ -1057,6 +1163,10 @@
   ],
   answer: [0, 1],
   exp: '論理レプリケーションの適用ワーカーは、サブスクライバ側で制約違反などが起きるとエラーで終了し、しばらくして再起動して同じ変更をやり直します。原因が解消されない限り同じエラーを繰り返し、それ以降の変更（この例の id = 3）も適用されません。PostgreSQL 14 では競合を自動的に解決したり、読み飛ばしたりする機能はありません。\n対処は、サブスクライバ側で競合の原因となっているデータを修正することです。実際に id = 2 の行を削除すると適用が再開され、id = 2（note）と id = 3（ink）が反映されました。どうしても変更を読み飛ばす場合は pg_replication_origin_advance() を使いますが、データが不整合になります。\n停止している間、パブリッシャ側のスロット（sub_items）は残って WAL を保持し続けるため、長く放置するとディスクを圧迫します。\nこの状況は PostgreSQL 14 で実際に再現したものです。',
+  evidence: [
+    ['パブリッシャとサブスクライバの状態、サブスクライバのログ',
+      'NOTICE:  created replication slot "sub_items" on publisher\n--- パブリッシャ ---\n id | name\n----+------\n  1 | pen\n  2 | note\n  3 | ink\n(3 rows)\n\n--- サブスクライバ ---\n id |    name\n----+------------\n  1 | pen\n  2 | local-note\n(2 rows)\n\n  subname  | pid | received_lsn | latest_end_lsn | last_msg_receipt_time\n-----------+-----+--------------+----------------+-----------------------\n sub_items |     |              |                |\n(1 row)\n\n slot_name | slot_type | database | active | wal_status\n-----------+-----------+----------+--------+------------\n standby1  | physical  |          | t      | reserved\n sub_items | logical   | shop     | f      | reserved\n(2 rows)\n\n--- サブスクライバのログ ---\n2026-09-17 06:46:54.543 UTC [17384] DETAIL:  Key (id)=(2) already exists.\n2026-09-17 06:46:54.544 UTC [17324] LOG:  background worker "logical replication worker" (PID 17384) exited with exit code 1\n2026-09-17 06:46:59.677 UTC [17391] ERROR:  duplicate key value violates unique constraint "items_pkey"\n2026-09-17 06:46:59.677 UTC [17391] DETAIL:  Key (id)=(2) already exists.\n2026-09-17 06:46:59.678 UTC [17324] LOG:  background worker "logical replication worker" (PID 17391) exited with exit code 1\n--- 競合行を削除した後のサブスクライバ ---\n id | name\n----+------\n  1 | pen\n  2 | note\n  3 | ink\n(3 rows)\n\nNOTICE:  dropped replication slot "sub_items" on publisher']
+  ],
   refs: [
     ['論理レプリケーションの競合', 'logical-replication-conflicts.html'],
     ['サブスクリプション', 'logical-replication-subscription.html']

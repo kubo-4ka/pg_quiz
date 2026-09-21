@@ -590,6 +590,10 @@
   ],
   answer: [0, 1],
   exp: '\\d+ はテーブルの列・インデックス・制約に加えて、格納方式（Storage）や格納パラメータ（Options）を表示します。\n「Options: autovacuum_enabled=off」は ALTER TABLE ... SET (autovacuum_enabled = off) で自動バキュームを無効にしていることを示します。この状態で更新を続けると不要タプルがたまり続けるため、手動の VACUUM が必要です。\nForeign-key constraints に customers(id) を参照する制約が表示されています。\nstatus と note の Storage は extended（圧縮と TOAST への退避を許可）です。\norders_customer_id_idx は UNIQUE と表示されていないので、一意インデックスではありません（一意なら「UNIQUE, btree」と表示されます）。\nnote の Nullable 欄は空なので NULL を格納できます。',
+  evidence: [
+    ['\\d+ の出力（Storage 列を含む）',
+      'Table "public.orders"\n   Column    |           Type           | Collation | Nullable |           Default            | Storage  | Compression | Stats target | Description\n-------------+--------------------------+-----------+----------+------------------------------+----------+-------------+--------------+-------------\n id          | bigint                   |           | not null | generated always as identity | plain    |             |              |\n customer_id | integer                  |           | not null |                              | plain    |             |              |\n status      | text                     |           |          | \'new\'::text                  | extended |             |              |\n amount      | numeric(10,2)            |           |          |                              | main     |             |              |\n note        | text                     |           |          |                              | extended |             |              |\n created_at  | timestamp with time zone |           |          | now()                        | plain    |             |              |\nIndexes:\n    "orders_pkey" PRIMARY KEY, btree (id)\n    "orders_customer_id_idx" btree (customer_id)\nAccess method: heap']
+  ],
   refs: [
     ['psql', 'app-psql.html'],
     ['格納パラメータ', 'sql-createtable.html#SQL-CREATETABLE-STORAGE-PARAMETERS'],
@@ -609,6 +613,10 @@
   ],
   answer: [0, 1],
   exp: 'pg_isready は接続の受け付け状況だけを確認するツールで、終了ステータスは 0 が「接続を受け付けている」、1 が「起動処理中などで拒否している」、2 が「応答がない」、3 が「パラメータの誤りなどで試行していない」です。認証までは行わないため、ユーザ名やパスワードが正しくなくても 0 を返します。\npg_ctl status は、-D（または PGDATA）で指定したデータディレクトリの postmaster.pid を調べ、稼働中なら PID と起動時のコマンドラインを表示します。対象はそのデータディレクトリのサーバだけです。\nこれらの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['pg_isready と pg_ctl status の結果（データディレクトリがない場合も）',
+      '$ pg_isready -p 5432; echo "exit=$?"\n/run/postgresql:5432 - accepting connections\nexit=0\n$ pg_isready -p 5999; echo "exit=$?"\n/run/postgresql:5999 - no response\nexit=2\n$ pg_ctl -D /var/lib/pgsql/14/primary status\npg_ctl: server is running (PID: 85970)\n/usr/pgsql-14/bin/postgres "-D" "/var/lib/pgsql/14/primary"\n$ pg_ctl -D /var/lib/pgsql/14/nosuch status; echo "exit=$?"\npg_ctl: directory "/var/lib/pgsql/14/nosuch" does not exist\nexit=4']
+  ],
   refs: [
     ['pg_isready', 'app-pg-isready.html'],
     ['pg_ctl', 'app-pg-ctl.html']
@@ -627,6 +635,10 @@
   ],
   answer: [0, 1],
   exp: 'dropuser は DROP ROLE を実行するラッパーです。-e（--echo）を付けると、サーバに送る SQL が表示されます。出力の DROP ROLE bob; がそれです。\n2回目はロールがすでに存在しないため、DROP ROLE がエラーになり、終了ステータスは 1 です。--if-exists を付けると DROP ROLE IF EXISTS が実行され、NOTICE が出るだけで終了ステータスは 0 になります。\n削除するのはデータベースのロールだけで、OS のユーザには関係しません。また、DROP ROLE はロールが所有するオブジェクトを削除しないため、オブジェクトを所有しているロールは、REASSIGN OWNED や DROP OWNED で処理してからでないと削除できません。\n対になるコマンドとして、ロールを作成する createuser があります。',
+  evidence: [
+    ['dropuser の実行と、createuser との対応',
+      '$ createuser -e bob\nSELECT pg_catalog.set_config(\'search_path\', \'\', false);\nCREATE ROLE bob NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT LOGIN;\ncreateuser: error: creation of new role failed: ERROR:  role "bob" already exists\n$ dropuser -e bob\nSELECT pg_catalog.set_config(\'search_path\', \'\', false);\nDROP ROLE bob;\n$ dropuser -e bob\nSELECT pg_catalog.set_config(\'search_path\', \'\', false);\nDROP ROLE bob;\ndropuser: error: removal of role "bob" failed: ERROR:  role "bob" does not exist\nexit status: 1\n$ dropuser -e --if-exists bob\n\nSELECT pg_catalog.set_config(\'search_path\', \'\', false);\nDROP ROLE IF EXISTS bob;\nexit status: 0']
+  ],
   refs: [
     ['dropuser', 'app-dropuser.html'],
     ['createuser', 'app-createuser.html'],
@@ -803,6 +815,10 @@
   ],
   answer: 2,
   exp: 'pg_hba.conf は上から順に評価され、条件が一致した最初の行が使われます。\n・1行目: local は Unix ドメインソケット接続なので、TCP/IP 接続には一致しません。\n・2行目: host（TCP/IP）、データベース sales、全ユーザ、192.168.1.0/24 の範囲に 192.168.1.10 が含まれるため一致し、scram-sha-256 のパスワード認証が行われます。\n最初に一致した行で判定されるため、3行目の reject は評価されません。192.168.1.0/24 以外のアドレスや、sales 以外のデータベースへの TCP/IP 接続は3行目で拒否されます。',
+  evidence: [
+    ['問題と同じ構成（アドレスはこの環境に合わせて 10.0.2.0/24）で接続した結果',
+      '--- pg_hba.conf\nlocal   all       all                    peer\nhost    sales     all   10.0.2.0/24      scram-sha-256\nhost    all       all   0.0.0.0/0        reject\n\n--- サーバが読み込んだ内容（pg_hba_file_rules）\n line_number | type  | database | user_name | address  |    netmask    |  auth_method\n-------------+-------+----------+-----------+----------+---------------+---------------\n           2 | local | {all}    | {all}     |          |               | peer\n           3 | host  | {sales}  | {all}     | 10.0.2.0 | 255.255.255.0 | scram-sha-256\n           4 | host  | {all}    | {all}     | 0.0.0.0  | 0.0.0.0       | reject\n(3 rows)\n\n--- 10.0.2.0/24 のホスト（このVM: 10.0.2.15）から sales へ：2行目に一致\n$ psql -h 10.0.2.15 -U bob -d sales -c "SELECT current_user, inet_client_addr();"\n current_user | inet_client_addr\n--------------+------------------\n bob          | 10.0.2.15\n(1 row)\n\n--- 同じホストから shop へ：2行目に一致せず、3行目の reject に一致\n$ psql -h 10.0.2.15 -U bob -d shop\npsql: error: connection to server at "10.0.2.15", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "10.0.2.15", user "bob", database "shop", no encryption\n--- 127.0.0.1（10.0.2.0/24 の外）から sales へ：3行目の reject に一致\n$ psql -h 127.0.0.1 -U bob -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "127.0.0.1", user "bob", database "sales", no encryption\n--- Unix ソケット（local）から：1行目の peer に一致\n$ psql -U postgres -d sales -c "SELECT current_user;"\n current_user\n--------------\n postgres\n(1 row)\n\npg_hba.conf を元に戻しました']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html'],
     ['パスワード認証', 'auth-password.html']
@@ -1092,6 +1108,10 @@
   ],
   answer: 0,
   exp: 'pg_hba.conf は上から順に評価され、接続種別（host）・データベース（sales）・ユーザ（bob）・接続元アドレス（127.0.0.1）がすべて一致した最初の行だけが使われます。この例では3行目の reject が最初に一致するため、パスワードの確認もなく拒否されます。後続の行が試されることはありません。\n実際に PostgreSQL 14 で試すと、次のエラーになります。\n`FATAL:  pg_hba.conf rejects connection for host "127.0.0.1", user "bob", database "sales", no encryption`\nlocal の行は Unix ドメインソケット接続にだけ一致し、TCP/IP 接続（-h 127.0.0.1）には一致しません。\nどの行にも一致しない場合も接続は拒否されます（既定で許可されることはありません）。',
+  evidence: [
+    ['問題と同じ pg_hba.conf で、いくつかの組み合わせで接続した結果',
+      'local   all             postgres                                peer\nlocal   all             all                                     scram-sha-256\nhost    sales           bob             127.0.0.1/32            reject\nhost    all             all             127.0.0.1/32            scram-sha-256\nhost    replication     postgres        127.0.0.1/32            trust\n--- bob が 127.0.0.1 から sales へ（パスワード正しい）\n$ psql -h 127.0.0.1 -U bob -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "127.0.0.1", user "bob", database "sales", no encryption\n\n--- bob が 127.0.0.1 から shop へ（パスワード正しい）\n$ psql -h 127.0.0.1 -U bob -d shop\nconnected as bob\n\n--- alice が 127.0.0.1 から sales へ（パスワード誤り）\n$ psql -h 127.0.0.1 -U alice -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "alice"\n\n--- alice が 10.0.2.15 から sales へ\n$ psql -h 10.0.2.15 -U alice -d sales\npsql: error: connection to server at "10.0.2.15", port 5432 failed: FATAL:  no pg_hba.conf entry for host "10.0.2.15", user "alice", database "sales", no encryption\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワードなし）\n$ psql  -U carol -d sales\npsql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: fe_sendauth: no password supplied\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワード正しい）\n$ psql  -U carol -d sales\nconnected as carol']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html']
   ]
@@ -1109,6 +1129,10 @@
   ],
   answer: 0,
   exp: 'いずれも PostgreSQL 14 で実際に出力されたメッセージです。\n(1)「pg_hba.conf rejects connection」は、一致した行の認証方式が reject だったことを表します。\n(2)「password authentication failed」は、一致した行の方式（scram-sha-256 など）でパスワードの照合に失敗したことを表します。この場合、後続の行は試されません。\n(3)「no pg_hba.conf entry」は、接続種別・データベース・ユーザ・アドレスがすべて一致する行が1つもないことを表します。\n末尾の「no encryption」は SSL を使っていない接続であることを示しています。hostssl の行しか用意していない場合なども、このメッセージになります。',
+  evidence: [
+    ['3種類のエラーが出たときの pg_hba.conf と接続',
+      'local   all             postgres                                peer\nlocal   all             all                                     scram-sha-256\nhost    sales           bob             127.0.0.1/32            reject\nhost    all             all             127.0.0.1/32            scram-sha-256\nhost    replication     postgres        127.0.0.1/32            trust\n--- bob が 127.0.0.1 から sales へ（パスワード正しい）\n$ psql -h 127.0.0.1 -U bob -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "127.0.0.1", user "bob", database "sales", no encryption\n\n--- bob が 127.0.0.1 から shop へ（パスワード正しい）\n$ psql -h 127.0.0.1 -U bob -d shop\nconnected as bob\n\n--- alice が 127.0.0.1 から sales へ（パスワード誤り）\n$ psql -h 127.0.0.1 -U alice -d sales\npsql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "alice"\n\n--- alice が 10.0.2.15 から sales へ\n$ psql -h 10.0.2.15 -U alice -d sales\npsql: error: connection to server at "10.0.2.15", port 5432 failed: FATAL:  no pg_hba.conf entry for host "10.0.2.15", user "alice", database "sales", no encryption\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワードなし）\n$ psql  -U carol -d sales\npsql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: fe_sendauth: no password supplied\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワード正しい）\n$ psql  -U carol -d sales\nconnected as carol']
+  ],
   refs: [
     ['pg_hba.confファイル', 'auth-pg-hba-conf.html'],
     ['認証の問題', 'client-authentication-problems.html']
@@ -1127,6 +1151,10 @@
   ],
   answer: 0,
   exp: '「fe_sendauth: no password supplied」は、サーバがパスワードを要求したのに、クライアント（フロントエンド）側がパスワードを送れなかったことを表すクライアント側のメッセージです。この例では -w（パスワードの入力を求めない）を付けたうえ、.pgpass や環境変数 PGPASSWORD にもパスワードがなかったため発生しました。同じ条件でパスワードを渡すと接続できることを確認しています。\nソケット経由の接続自体は local の行で許可されています。\nサーバが停止している場合は「No such file or directory」や「Is the server running locally...」といったメッセージになります。\nデータベースが存在しない場合は、認証の後に「database "sales" does not exist」となります。',
+  evidence: [
+    ['local 行が scram-sha-256 のときに、パスワードを渡さずに接続した場合',
+      '--- carol がローカル（Unix ソケット）から sales へ（パスワードなし）\n$ psql  -U carol -d sales\npsql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: fe_sendauth: no password supplied\n\n--- carol がローカル（Unix ソケット）から sales へ（パスワード正しい）\n$ psql  -U carol -d sales\nconnected as carol']
+  ],
   refs: [
     ['パスワード認証', 'auth-password.html'],
     ['パスワードファイル', 'libpq-pgpass.html'],
@@ -1146,6 +1174,10 @@
   ],
   answer: 0,
   exp: 'SET はセッションの間有効で、(1) は 128MB です。\nSET LOCAL はトランザクションの間だけ有効で、(2) は 256MB になり、COMMIT（ROLLBACK でも同じ）でトランザクションが終わると SET で設定していた 128MB に戻ります（3）。\nRESET は、そのセッションの「既定値」に戻します。既定値は組み込みの値や postgresql.conf ではなく、接続時に適用された設定（この例ではロールとデータベースの組み合わせの 64MB）です（4）。\nこの結果は PostgreSQL 14 で実際に確認したものです。',
+  evidence: [
+    ['ロールとデータベースに設定した値と、SET / SET LOCAL / RESET の結果',
+      '（ロールとデータベースの組み合わせに設定されている値を確認）\n rolname | datname |    setconfig\n---------+---------+-----------------\n carol   | evid4   | {work_mem=64MB}\n(1 row)\n\nSHOW work_mem;\n work_mem\n----------\n 64MB\n(1 row)\n\nSET work_mem = \'128MB\';\nSET\nSHOW work_mem;\n work_mem\n----------\n 128MB\n(1 row)\n\nBEGIN;\nBEGIN\nSET LOCAL work_mem = \'256MB\';\nSET\nSHOW work_mem;\n work_mem\n----------\n 256MB\n(1 row)\n\nCOMMIT;\nCOMMIT\nSHOW work_mem;\n work_mem\n----------\n 128MB\n(1 row)\n\nRESET work_mem;\nRESET\nSHOW work_mem;\n work_mem\n----------\n 64MB\n(1 row)']
+  ],
   refs: [
     ['SET', 'sql-set.html'],
     ['RESET', 'sql-reset.html']
@@ -1400,6 +1432,10 @@
   ],
   answer: 2,
   exp: 'COPY テーブル TO \'ファイル名\' は、テーブルの内容をデータベースサーバ上のファイルに書き出します（既存のファイルは上書きされます）。FORMAT csv で CSV 形式、HEADER true で先頭に列名のヘッダ行を出力します。DELIMITER、NULL、QUOTE などのオプションもあります。\nサーバ上のファイルに書き出すには、スーパーユーザか pg_write_server_files ロールのメンバーである必要があります。クライアント側に書き出す場合は psql の \\copy orders TO \'orders.csv\' WITH (FORMAT csv, HEADER true) を使います。\nCOPY FROM で HEADER true を指定すると、読み込み時に先頭行が読み飛ばされます。',
+  evidence: [
+    ['COPY TO で書き出したファイルと、権限がない場合・\\copy の場合',
+      'COPY 1000\n$ head -3 /tmp/products.csv   （サーバのファイルシステム上に作られる）\nid,name,price\n1,item1,10\n2,item2,20\n$ ls -l /tmp/products.csv\npostgres 16693 /tmp/products.csv\n（一般ロールで実行した場合）\nERROR:  must be superuser or a member of the pg_write_server_files role to COPY to a file\nHINT:  Anyone can COPY to stdout or from stdin. psql\'s \\copy command also works for anyone.\n（psql のメタコマンド \\copy はクライアント側に書き出す）\nCOPY 1000\n1,item1,10\n2,item2,20']
+  ],
   refs: [
     ['COPY', 'sql-copy.html']
   ]
@@ -1417,6 +1453,12 @@
   ],
   answer: 3,
   exp: 'archive_command では、%p がアーカイブする WAL ファイルのパス（データディレクトリからの相対パス）、%f がファイル名だけに置き換えられます。この例はドキュメントにも載っている典型的な設定で、test ! -f でアーカイブ先に同名のファイルがないことを確認してからコピーするため、既存のアーカイブを誤って上書きしません。\nコマンドは成功した場合にだけ終了ステータス 0 を返す必要があり、0 以外の場合は失敗とみなされて、後で再試行されます。',
+  evidence: [
+    ['設定と、WAL を切り替えたときのアーカイブ',
+      'name       |                                          setting\n-----------------+--------------------------------------------------------------------------------------------\n archive_command | test ! -f /var/lib/pgsql/14/backup/archive/%f && cp %p /var/lib/pgsql/14/backup/archive/%f\n archive_mode    | on\n wal_level       | replica\n(3 rows)\n\n現在の WAL: 00000001000000000000007B\n$ ls -l archive/\n16777216  00000001000000000000007B\n5  000000010000000000000099\n archived_count |    last_archived_wal     | failed_count\n----------------+--------------------------+--------------\n              8 | 00000001000000000000007B |            0\n(1 row)'],
+    ['アーカイブ先に同じ名前のファイルがある場合（test ! -f が偽になり cp は実行されない）',
+      'NOTICE:  relation "w" already exists, skipping\n\n次にアーカイブされる WAL: 00000001000000000000007C\n$ ls -l archive/$NEXT   （中身は 18 バイトのダミー）\n18  /var/lib/pgsql/14/backup/archive/00000001000000000000007C\n$ サーバログ\n2026-09-21 03:28:04.142 UTC [43537] LOG:  archive command failed with exit code 1\n2026-09-21 03:28:05.173 UTC [43537] LOG:  archive command failed with exit code 1\n2026-09-21 03:28:05.173 UTC [43537] WARNING:  archiving write-ahead log file "00000001000000000000007C" failed too many times, will try again later\n archived_count | failed_count |     last_failed_wal\n----------------+--------------+--------------------------\n              8 |            3 | 00000001000000000000007C\n(1 row)\n\n（既存のファイルは上書きされていない）\n18  /var/lib/pgsql/14/backup/archive/00000001000000000000007C\n（既存のファイルは上書きされていない）\n18  .../archive/00000001000000000000007C\n（アーカイブできない WAL は pg_wal に残り、archive_status では .ready のままになる）\n00000001000000000000007A.done\n00000001000000000000007B.done\n00000001000000000000007C.ready']
+  ],
   refs: [
     ['WALアーカイブの設定', 'continuous-archiving.html#BACKUP-ARCHIVING-WAL'],
     ['archive_command', 'runtime-config-wal.html#GUC-ARCHIVE-COMMAND']
@@ -1517,6 +1559,12 @@
   ],
   answer: 0,
   exp: 'ロール（ユーザ）やテーブル空間は特定のデータベースではなくクラスタ全体に属する情報で、pg_dump の出力には含まれません。pg_dumpall --globals-only（-g）でこれらだけを取得し、リストア先で先に実行してからデータベースのダンプを流します。\npg_dumpall をオプションなしで実行すると、グローバルな情報と全データベースをまとめて出力します。\n--no-owner は所有者の設定を省く指定で、所有者を元どおりにしたい場合の解決にはなりません。\n出力形式を変えてもロールは含まれません。',
+  evidence: [
+    ['ロールがないサーバへのリストア（所有者の変更だけが失敗する）',
+      '(リストア前) ロールの一覧\n                                   List of roles\n Role name |                         Attributes                         | Member of\n-----------+------------------------------------------------------------+-----------\n postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS | {}\n\n$ pg_restore -d shop2 shop2.dump\npg_restore: while PROCESSING TOC:\npg_restore: from TOC entry 209; 1259 32794 TABLE products app_owner\npg_restore: error: could not execute query: ERROR:  role "app_owner" does not exist\nCommand was: ALTER TABLE public.products OWNER TO app_owner;\n\npg_restore: warning: errors ignored on restore: 1\nexit status: 1'],
+    ['pg_dumpall --globals-only でロールを取得し、作ってからリストアし直す',
+      '$ pg_dumpall --globals-only | grep app_owner   （元のサーバ側）\nCREATE ROLE app_owner;\nALTER ROLE app_owner WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS;\nALTER TABLE\n tableowner\n------------\n app_owner\n(1 row)\n\n（別の方法）ロールを先に作ってからリストアし直す\nexit status: 0\n tableowner\n------------\n app_owner\n(1 row)\n\n（--no-owner を使う場合）\nexit status: 0\n tableowner\n------------\n postgres\n(1 row)']
+  ],
   refs: [
     ['pg_dumpall', 'app-pg-dumpall.html'],
     ['データベース全体のダンプ', 'backup-dump.html#BACKUP-DUMP-ALL']
@@ -1620,6 +1668,10 @@
   ],
   answer: 0,
   exp: 'pg_restore -l は、カスタム形式やディレクトリ形式のダンプに含まれる項目（TOC: 目次）を一覧表示するだけで、データベースには何もしません。表示された行を編集（不要な行を削除したり、行頭に ; を付けてコメントにしたり）したファイルを pg_restore -L に渡すと、その項目だけを、そのファイルの順序でリストアできます。\nこの例では、テーブル定義（TABLE）、権限（ACL）、データ（TABLE DATA）、主キー制約（CONSTRAINT）、インデックス（INDEX）が含まれています。末尾の app_owner はオブジェクトの所有者（ロール）です。\nこの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['pg_restore -l の出力と、項目を絞ったリストア',
+      '$ pg_restore -l shop2.dump\n;\n; Archive created at 2026-09-21 03:21:58 UTC\n;     dbname: shop2\n;     TOC Entries: 9\n;     Compression: -1\n;     Dump Version: 1.14-0\n;     Format: CUSTOM\n;     Integer: 4 bytes\n;     Offset: 8 bytes\n;     Dumped from database version: 14.24\n;     Dumped by pg_dump version: 14.24\n;\n;\n; Selected TOC Entries:\n;\n209; 1259 32794 TABLE public products app_owner\n3364; 0 0 ACL public TABLE products app_owner\n3357; 0 32794 TABLE DATA public products app_owner\n3217; 2606 32800 CONSTRAINT public products products_pkey app_owner\n3215; 1259 32801 INDEX public products_name_idx app_owner\n$ pg_restore -l shop2.dump > toc.txt   （不要な項目を削除して -L で渡す）\n3357; 0 32794 TABLE DATA public products app_owner\n3215; 1259 32801 INDEX public products_name_idx app_owner\n$ pg_restore -d shop2 -t products --no-owner shop2.dump   （テーブル定義とデータだけ）\nexit status: 0\n              Table "public.products"\n Column |  Type   | Collation | Nullable | Default\n--------+---------+-----------+----------+---------\n id     | integer |           | not null |\n name   | text    |           |          |\n price  | numeric |           |          |']
+  ],
   refs: [
     ['pg_restore', 'app-pgrestore.html'],
     ['pg_dump', 'app-pgdump.html']
@@ -1638,6 +1690,16 @@
   ],
   answer: [0, 1],
   exp: 'pg_restore は既定では、エラーが起きても次の項目の処理を続けます（「errors ignored on restore」）。この例では所有者を app_owner に変更する ALTER TABLE だけが失敗し、テーブル、データ、制約、インデックスは作成されました。実際に確認すると products には 1000 行が入っており、所有者はリストアを実行した postgres でした。\nただし終了ステータスは 1 なので、スクリプトから実行する場合は失敗として扱われます。\nロールはクラスタ全体のオブジェクトで pg_dump には含まれないため、事前に pg_dumpall --globals-only などで作っておくか、所有者を気にしない場合は --no-owner を指定します。途中で止めて全体を取り消したい場合は --exit-on-error や --single-transaction を使います。\nこの出力は PostgreSQL 14 で実際に採取したものです。',
+  evidence: [
+    ['ダンプ元のサーバ（products は app_owner が所有し、PUBLIC に SELECT 権限）',
+      'postgres=# \\du app_owner\n           List of roles\n Role name | Attributes | Member of\n-----------+------------+-----------\n app_owner |            | {}\n\n                                     List of relations\n Schema |   Name   | Type  |   Owner   | Persistence | Access method | Size  | Description\n--------+----------+-------+-----------+-------------+---------------+-------+-------------\n public | products | table | app_owner | permanent   | heap          | 88 kB |\n(1 row)\n\n                                   Access privileges\n Schema |   Name   | Type  |      Access privileges      | Column privileges | Policies\n--------+----------+-------+-----------------------------+-------------------+----------\n public | products | table | app_owner=arwdDxt/app_owner+|                   |\n        |          |       | =r/app_owner                |                   |\n(1 row)\n\n count | min | max\n-------+-----+------\n  1000 |   1 | 1000\n(1 row)\n\n id | name  | price\n----+-------+-------\n  1 | item1 |    10\n  2 | item2 |    20\n  3 | item3 |    30\n(3 rows)\n\n$ pg_dump -Fc -f shop2.dump shop2\n7528 bytes  /var/lib/pgsql/14/backup/shop2.dump'],
+    ['リストア先のサーバ（app_owner がない）でのリストア',
+      '(リストア前) ロールの一覧\n                                   List of roles\n Role name |                         Attributes                         | Member of\n-----------+------------------------------------------------------------+-----------\n postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS | {}\n\n$ pg_restore -d shop2 shop2.dump\npg_restore: while PROCESSING TOC:\npg_restore: from TOC entry 209; 1259 32794 TABLE products app_owner\npg_restore: error: could not execute query: ERROR:  role "app_owner" does not exist\nCommand was: ALTER TABLE public.products OWNER TO app_owner;\n\npg_restore: warning: errors ignored on restore: 1\nexit status: 1'],
+    ['リストア後の状態（テーブル・データ・インデックス・権限・所有者）',
+      'List of relations\n Schema |   Name   | Type  |  Owner\n--------+----------+-------+----------\n public | products | table | postgres\n(1 row)\n\n                    List of relations\n Schema |       Name        | Type  |  Owner   |  Table\n--------+-------------------+-------+----------+----------\n public | products_name_idx | index | postgres | products\n public | products_pkey     | index | postgres | products\n(2 rows)\n\n count\n-------\n  1000\n(1 row)\n\n                                  Access privileges\n Schema |   Name   | Type  |     Access privileges     | Column privileges | Policies\n--------+----------+-------+---------------------------+-------------------+----------\n public | products | table | postgres=arwdDxt/postgres+|                   |\n        |          |       | =r/postgres               |                   |\n(1 row)\n\n tableowner\n------------\n postgres\n(1 row)'],
+    ['ロールを作って所有者を直す／先にロールを作る／--no-owner を使う',
+      '$ pg_dumpall --globals-only | grep app_owner   （元のサーバ側）\nCREATE ROLE app_owner;\nALTER ROLE app_owner WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS;\nALTER TABLE\n tableowner\n------------\n app_owner\n(1 row)\n\n（別の方法）ロールを先に作ってからリストアし直す\nexit status: 0\n tableowner\n------------\n app_owner\n(1 row)\n\n（--no-owner を使う場合）\nexit status: 0\n tableowner\n------------\n postgres\n(1 row)']
+  ],
   refs: [
     ['pg_restore', 'app-pgrestore.html'],
     ['pg_dumpall', 'app-pg-dumpall.html']
@@ -1656,6 +1718,10 @@
   ],
   answer: 0,
   exp: 'pg_dump で -F を指定しない場合の出力はプレーンテキスト形式（SQL 文の並び）です。この形式は pg_restore では扱えず、psql で実行します。メッセージもそのように案内しています。\npg_restore が読めるのは、カスタム形式（-Fc）、ディレクトリ形式（-Fd）、tar 形式（-Ft）のダンプです。pg_restore -F は入力形式の指定ですが、ファイルの実体がテキスト形式なので読み込めません。\n一部だけのリストアや並列リストア（-j）を使いたい場合は、最初からカスタム形式かディレクトリ形式でダンプしておきます。\nこのエラーは PostgreSQL 14 で実際に出力されたものです。',
+  evidence: [
+    ['プレーンテキスト形式のダンプの中身と、psql での復元',
+      '$ head -20 shop2.sql\n\\restrict UCNQE72Eenbcuyu21lzHcVUTqnzrvuO0gMwbQgTUSjMHH3HKrOcH2rFVfmgtutn\nSET statement_timeout = 0;\nSET lock_timeout = 0;\nSET idle_in_transaction_session_timeout = 0;\nSET client_encoding = \'UTF8\';\nSET standard_conforming_strings = on;\nSELECT pg_catalog.set_config(\'search_path\', \'\', false);\nSET check_function_bodies = false;\nSET xmloption = content;\nSET client_min_messages = warning;\nSET row_security = off;\nSET default_tablespace = \'\';\nSET default_table_access_method = heap;\nCREATE TABLE public.products (\n$ pg_restore -d shop2 shop2.sql\npg_restore: error: input file appears to be a text format dump. Please use psql.\nexit status: 1\n$ psql -d shop3 -f shop2.sql\nNOTICE:  database "shop3" does not exist, skipping\n\nSET\nSET\nCREATE TABLE\nALTER TABLE\nCOPY 1000\nALTER TABLE\nCREATE INDEX\nGRANT\n count\n-------\n  1000\n(1 row)']
+  ],
   refs: [
     ['SQLダンプからのリストア', 'backup-dump.html#BACKUP-DUMP-RESTORE'],
     ['pg_restore', 'app-pgrestore.html']
@@ -2119,6 +2185,10 @@
   ],
   answer: 0,
   exp: 'pg_relation_size() はテーブル本体（main フォーク）、pg_indexes_size() はそのテーブルのインデックスの合計、pg_table_size() はインデックスを除いたテーブルの大きさ（本体に加えて FSM・VM・TOAST を含む）、pg_total_relation_size() はインデックスも含めた合計です。\nこの結果では total 28 MB ＝ table_size 17 MB ＋ indexes 11 MB となっています。\ntable_size と heap が同じ 17 MB に見えるのは、FSM や TOAST が小さく pg_size_pretty() の丸めに隠れているためで、TOAST テーブルがないとは言えません（このテーブルには text 列があるため、TOAST テーブルは存在します）。',
+  evidence: [
+    ['大きさを返す関数の結果と、その内訳',
+      '=# SELECT pg_size_pretty(pg_relation_size(\'orders\')) AS heap, pg_size_pretty(pg_indexes_size(\'orders\')) AS indexes, pg_size_pretty(pg_table_size(\'orders\')) AS table_size, pg_size_pretty(pg_total_relation_size(\'orders\')) AS total;\n  heap  | indexes | table_size | total\n--------+---------+------------+--------\n 472 kB | 80 kB   | 504 kB     | 584 kB\n(1 row)\n\n=# SELECT relname, pg_size_pretty(pg_relation_size(oid)) AS size FROM pg_class WHERE relname LIKE \'orders%\' OR oid = (SELECT reltoastrelid FROM pg_class WHERE relname = \'orders\') ORDER BY relname;\n        relname         |    size\n------------------------+------------\n orders                 | 472 kB\n orders_customer_id_idx | 40 kB\n orders_id_seq          | 8192 bytes\n orders_pkey            | 40 kB\n pg_toast_33232         | 0 bytes\n(5 rows)']
+  ],
   refs: [
     ['データベースオブジェクト管理関数', 'functions-admin.html#FUNCTIONS-ADMIN-DBSIZE'],
     ['ディスク使用量の決定', 'disk-usage.html']
